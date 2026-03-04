@@ -102,6 +102,7 @@ namespace {
     struct ParsedDocument {
         ujson::Node* root_node = nullptr;
         ujson::Arena* arena = nullptr;
+        ujson::DomContext ctx {};
         ujson::ParseError err {};
 
         [[nodiscard]] bool ok() const noexcept {
@@ -113,14 +114,14 @@ namespace {
         }
 
         [[nodiscard]] ujson::ValueRef root() const noexcept {
-            return {root_node, arena};
+            return ujson::ValueRef(root_node, &ctx);
         }
     };
 
     [[nodiscard]] ParsedDocument parse_document(const std::string_view json, ujson::Arena& arena, const std::uint32_t max_depth) {
-        ParsedDocument doc {.root_node = nullptr, .arena = &arena, .err = {}};
+        ParsedDocument doc {.root_node = nullptr, .arena = &arena, .ctx = {&arena, ujson::init_key_format(arena, ujson::detail::key_format::SnakeCase)}, .err = {}};
 
-        ujson::SaxDomHandler builder {arena, max_depth};
+        ujson::SaxDomHandler builder {doc.ctx, max_depth};
         ujson::CoreParser<false, true, ujson::SaxDomHandler> parser(builder, json, max_depth);
 
         doc.err = parser.parse_root();
@@ -637,10 +638,7 @@ TEST_CASE("ujson twitter: SAX -> DOM -> encode (streaming transform)", "[ujson][
         REQUIRE(parser.parse().ok());
         REQUIRE(builder.ok());
 
-        ujson::ParseError werr {};
-        const std::string out = ujson::encode({builder.root().raw(), &arena}, false, &werr);
-
-        REQUIRE(werr.ok());
+        const std::string out = builder.encode();
         REQUIRE(!out.empty());
 
         save_file("twitter_vb_out.json", out);
@@ -653,7 +651,8 @@ TEST_CASE("ujson twitter: SAX -> DOM -> encode (streaming transform)", "[ujson][
         ujson::NewAllocator alloc;
         ujson::Arena arena {alloc};
 
-        ujson::SaxDomHandler builder {arena, kMaxDepth};
+        ujson::DomContext ctx {&arena, ujson::init_key_format(arena, ujson::detail::key_format::SnakeCase)};
+        ujson::SaxDomHandler builder {ctx, kMaxDepth};
 
         ujson::SaxParser parser {builder, std::string_view {input}, arena, kMaxDepth};
 
@@ -663,7 +662,7 @@ TEST_CASE("ujson twitter: SAX -> DOM -> encode (streaming transform)", "[ujson][
 
         // encode
         ujson::ParseError werr {};
-        const std::string out = ujson::encode(ujson::ValueRef {builder.root(), &arena}, false, &werr);
+        const std::string out = ujson::encode(ujson::ValueRef(builder.root(), &ctx), false, &werr);
         REQUIRE(werr.ok());
         REQUIRE(!out.empty());
         save_file("twitter_out.json", out);
@@ -676,13 +675,14 @@ TEST_CASE("ujson twitter: SAX -> DOM -> encode (streaming transform)", "[ujson][
         ujson::NewAllocator alloc;
         ujson::Arena arena {alloc};
 
-        ujson::SaxDomHandler builder {arena, kMaxDepth};
+        ujson::DomContext ctx {&arena, ujson::init_key_format(arena, ujson::detail::key_format::SnakeCase)};
+        ujson::SaxDomHandler builder {ctx, kMaxDepth};
 
         ujson::SaxParser parser {builder, std::string_view {input}, arena, kMaxDepth};
         if (const bool ok = parser.parse().ok(); !ok || !builder.ok() || !builder.root())
             return std::size_t {0};
 
-        return static_cast<std::size_t>(ujson::ValueRef {builder.root(), &arena}.size());
+        return static_cast<std::size_t>(ujson::ValueRef(builder.root(), &ctx).size());
     };
 
     // --------- 3) encode only (DOM built once outside benchmark) ---------
