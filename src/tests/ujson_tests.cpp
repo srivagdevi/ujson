@@ -931,9 +931,10 @@ static constexpr std::size_t kLargeN = 50000;
 static constexpr std::size_t kMediumN = 10000;
 
 namespace {
-    template <class Policy>
-    void check_key_policy_builder(std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
-        TValueBuilder<Policy> b;
+    void check_key_policy_builder(detail::key_format fmt, std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
+        ValueBuilder::Options opt;
+        opt.key_format = fmt;
+        ValueBuilder b(opt);
         auto root = b.root().set_object();
 
         root.add(input1, 1);
@@ -951,10 +952,10 @@ namespace {
         REQUIRE(encoded.find(input2) == std::string::npos);
     }
 
-    template <class Policy>
-    void check_key_policy_roundtrip(std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
+    void check_key_policy_roundtrip(detail::key_format fmt, std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
         UJsonArena a;
-        TDomBuilder<Policy> b {a.arena};
+        a.arena.set_key_format(fmt);
+        DomBuilder b {a.arena};
 
         b.object([&] {
             b[input1] = 1;
@@ -997,38 +998,38 @@ TEST_CASE("Basic object insert and lookup", "[ujson][value_builder][basic]") {
 
 TEST_CASE("Key policy normalizes builder keys", "[ujson][value_builder][key_policy]") {
     SECTION("snake_case") {
-        check_key_policy_builder<detail::key_policy_snake_case>("fooBar", "FooBaz", "foo_bar", "foo_baz");
+        check_key_policy_builder(detail::key_format::SnakeCase, "fooBar", "FooBaz", "foo_bar", "foo_baz");
     }
 
     SECTION("camel_case") {
-        check_key_policy_builder<detail::key_policy_camel_case>("foo_bar", "foo-baz", "fooBar", "fooBaz");
+        check_key_policy_builder(detail::key_format::CamelCase, "foo_bar", "foo-baz", "fooBar", "fooBaz");
     }
 
     SECTION("pascal_case") {
-        check_key_policy_builder<detail::key_policy_pascal_case>("foo_bar", "foo-baz", "FooBar", "FooBaz");
+        check_key_policy_builder(detail::key_format::PascalCase, "foo_bar", "foo-baz", "FooBar", "FooBaz");
     }
 }
 
 TEST_CASE("Key policy writer/reader roundtrip", "[ujson][builder][key_policy]") {
     SECTION("snake_case") {
-        check_key_policy_roundtrip<detail::key_policy_snake_case>("fooBar", "FooBaz", "foo_bar", "foo_baz");
+        check_key_policy_roundtrip(detail::key_format::SnakeCase, "fooBar", "FooBaz", "foo_bar", "foo_baz");
     }
 
     SECTION("camel_case") {
-        check_key_policy_roundtrip<detail::key_policy_camel_case>("foo_bar", "foo-baz", "fooBar", "fooBaz");
+        check_key_policy_roundtrip(detail::key_format::CamelCase, "foo_bar", "foo-baz", "fooBar", "fooBaz");
     }
 
     SECTION("pascal_case") {
-        check_key_policy_roundtrip<detail::key_policy_pascal_case>("foo_bar", "foo-baz", "FooBar", "FooBaz");
+        check_key_policy_roundtrip(detail::key_format::PascalCase, "foo_bar", "foo-baz", "FooBar", "FooBaz");
     }
 }
 
 TEST_CASE("Key policy normalizes parsed keys", "[ujson][parser][key_policy]") {
     SECTION("snake_case") {
         const std::string json = R"({"fooBar":1,"FooBaz":2})";
-
-        using SnakeDocument = TDocument<false, false, true, detail::key_policy_snake_case>;
-        auto doc = SnakeDocument::parse(json);
+        UJsonArena arena;
+        arena.arena.set_key_format(detail::key_format::SnakeCase);
+        auto doc = TestDocument::parse(json, arena.arena);
 
         REQUIRE(doc.ok());
         REQUIRE(doc.root().get("foo_bar").as_i64() == 1);
@@ -1038,9 +1039,9 @@ TEST_CASE("Key policy normalizes parsed keys", "[ujson][parser][key_policy]") {
 
     SECTION("camel_case") {
         const std::string json = R"({"foo_bar":1,"foo-baz":2})";
-
-        using CamelDocument = TDocument<false, false, true, detail::key_policy_camel_case>;
-        auto doc = CamelDocument::parse(json);
+        UJsonArena arena;
+        arena.arena.set_key_format(detail::key_format::CamelCase);
+        auto doc = TestDocument::parse(json, arena.arena);
 
         REQUIRE(doc.ok());
         REQUIRE(doc.root().get("fooBar").as_i64() == 1);
@@ -1050,9 +1051,9 @@ TEST_CASE("Key policy normalizes parsed keys", "[ujson][parser][key_policy]") {
 
     SECTION("pascal_case") {
         const std::string json = R"({"foo_bar":1,"foo-baz":2})";
-
-        using PascalDocument = TDocument<false, false, true, detail::key_policy_pascal_case>;
-        auto doc = PascalDocument::parse(json);
+        UJsonArena arena;
+        arena.arena.set_key_format(detail::key_format::PascalCase);
+        auto doc = TestDocument::parse(json, arena.arena);
 
         REQUIRE(doc.ok());
         REQUIRE(doc.root().get("FooBar").as_i64() == 1);

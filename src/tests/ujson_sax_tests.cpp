@@ -98,7 +98,7 @@ TEST_CASE("ujson sax key policy", "[ujson][sax][key_policy]") {
     std::string json = R"({"fooBar":1})";
 
     RecordingHandler h;
-    SaxParser<RecordingHandler, detail::key_policy_snake_case> parser(h, json);
+    SaxParser parser(h, json, 512, detail::key_format::SnakeCase);
 
     REQUIRE(parser.parse());
 
