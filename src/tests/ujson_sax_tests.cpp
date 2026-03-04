@@ -94,6 +94,18 @@ TEST_CASE("ujson sax object", "[ujson][sax]") {
     REQUIRE(h.events == expected);
 }
 
+TEST_CASE("ujson sax key policy", "[ujson][sax][key_policy]") {
+    std::string json = R"({"fooBar":1})";
+
+    RecordingHandler h;
+    SaxParser<RecordingHandler, detail::key_policy_snake_case> parser(h, json);
+
+    REQUIRE(parser.parse());
+
+    std::vector<std::string> expected = {"{", "key:foo_bar", "num:1", "}"};
+    REQUIRE(h.events == expected);
+}
+
 TEST_CASE("ujson sax nested", "[ujson][sax]") {
     std::string json = R"({"a":[1,2,{"b":3}]})";
 

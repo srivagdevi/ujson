@@ -385,7 +385,7 @@ TEST_CASE("trailing garbage", "[ujson]") {
 TEST_CASE("string escape handling", "[ujson]") {
     UJsonArena a;
 
-    auto doc = DocumentT<false, true>::parse(std::string_view {R"({"s":"line\n\t\"quoted\"\\slash"})"}, a.arena);
+    auto doc = TDocument<false, true>::parse(std::string_view {R"({"s":"line\n\t\"quoted\"\\slash"})"}, a.arena);
 
     REQUIRE(doc.ok());
 
@@ -930,6 +930,52 @@ using namespace ujson;
 static constexpr std::size_t kLargeN = 50000;
 static constexpr std::size_t kMediumN = 10000;
 
+namespace {
+    template <class Policy>
+    void check_key_policy_builder(std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
+        TValueBuilder<Policy> b;
+        auto root = b.root().set_object();
+
+        root.add(input1, 1);
+        root.add(input2, 2);
+
+        REQUIRE(root.get(expected1).raw()->data.num.as_i64() == 1);
+        REQUIRE(root.get(expected2).raw()->data.num.as_i64() == 2);
+        REQUIRE(root.get(input1).raw()->data.num.as_i64() == 1);
+        REQUIRE(root.get(input2).raw()->data.num.as_i64() == 2);
+
+        const std::string encoded = b.encode();
+        REQUIRE(encoded.find(expected1) != std::string::npos);
+        REQUIRE(encoded.find(expected2) != std::string::npos);
+        REQUIRE(encoded.find(input1) == std::string::npos);
+        REQUIRE(encoded.find(input2) == std::string::npos);
+    }
+
+    template <class Policy>
+    void check_key_policy_roundtrip(std::string_view input1, std::string_view input2, std::string_view expected1, std::string_view expected2) {
+        UJsonArena a;
+        TDomBuilder<Policy> b {a.arena};
+
+        b.object([&] {
+            b[input1] = 1;
+            b[input2] = 2;
+        });
+
+        const std::string encoded = b.encode();
+        REQUIRE(encoded.find(expected1) != std::string::npos);
+        REQUIRE(encoded.find(expected2) != std::string::npos);
+        REQUIRE(encoded.find(input1) == std::string::npos);
+        REQUIRE(encoded.find(input2) == std::string::npos);
+
+        auto doc = TestDocument::parse(encoded, a.arena);
+        REQUIRE(doc.ok());
+        REQUIRE(doc.root().get(expected1).as_i64() == 1);
+        REQUIRE(doc.root().get(expected2).as_i64() == 2);
+        REQUIRE_FALSE(doc.root().contains(input1));
+        REQUIRE_FALSE(doc.root().contains(input2));
+    }
+} // namespace
+
 TEST_CASE("Basic object insert and lookup", "[ujson][value_builder][basic]") {
     ValueBuilder b;
     auto root = b.root().set_object();
@@ -947,6 +993,72 @@ TEST_CASE("Basic object insert and lookup", "[ujson][value_builder][basic]") {
     REQUIRE(root.get("c").raw()->data.num.i == 3);
 
     REQUIRE(b.ok());
+}
+
+TEST_CASE("Key policy normalizes builder keys", "[ujson][value_builder][key_policy]") {
+    SECTION("snake_case") {
+        check_key_policy_builder<detail::key_policy_snake_case>("fooBar", "FooBaz", "foo_bar", "foo_baz");
+    }
+
+    SECTION("camel_case") {
+        check_key_policy_builder<detail::key_policy_camel_case>("foo_bar", "foo-baz", "fooBar", "fooBaz");
+    }
+
+    SECTION("pascal_case") {
+        check_key_policy_builder<detail::key_policy_pascal_case>("foo_bar", "foo-baz", "FooBar", "FooBaz");
+    }
+}
+
+TEST_CASE("Key policy writer/reader roundtrip", "[ujson][builder][key_policy]") {
+    SECTION("snake_case") {
+        check_key_policy_roundtrip<detail::key_policy_snake_case>("fooBar", "FooBaz", "foo_bar", "foo_baz");
+    }
+
+    SECTION("camel_case") {
+        check_key_policy_roundtrip<detail::key_policy_camel_case>("foo_bar", "foo-baz", "fooBar", "fooBaz");
+    }
+
+    SECTION("pascal_case") {
+        check_key_policy_roundtrip<detail::key_policy_pascal_case>("foo_bar", "foo-baz", "FooBar", "FooBaz");
+    }
+}
+
+TEST_CASE("Key policy normalizes parsed keys", "[ujson][parser][key_policy]") {
+    SECTION("snake_case") {
+        const std::string json = R"({"fooBar":1,"FooBaz":2})";
+
+        using SnakeDocument = TDocument<false, false, true, detail::key_policy_snake_case>;
+        auto doc = SnakeDocument::parse(json);
+
+        REQUIRE(doc.ok());
+        REQUIRE(doc.root().get("foo_bar").as_i64() == 1);
+        REQUIRE(doc.root().get("foo_baz").as_i64() == 2);
+        REQUIRE(doc.root().contains("FooBaz"));
+    }
+
+    SECTION("camel_case") {
+        const std::string json = R"({"foo_bar":1,"foo-baz":2})";
+
+        using CamelDocument = TDocument<false, false, true, detail::key_policy_camel_case>;
+        auto doc = CamelDocument::parse(json);
+
+        REQUIRE(doc.ok());
+        REQUIRE(doc.root().get("fooBar").as_i64() == 1);
+        REQUIRE(doc.root().get("fooBaz").as_i64() == 2);
+        REQUIRE(doc.root().contains("foo_bar"));
+    }
+
+    SECTION("pascal_case") {
+        const std::string json = R"({"foo_bar":1,"foo-baz":2})";
+
+        using PascalDocument = TDocument<false, false, true, detail::key_policy_pascal_case>;
+        auto doc = PascalDocument::parse(json);
+
+        REQUIRE(doc.ok());
+        REQUIRE(doc.root().get("FooBar").as_i64() == 1);
+        REQUIRE(doc.root().get("FooBaz").as_i64() == 2);
+        REQUIRE(doc.root().contains("foo_bar"));
+    }
 }
 
 TEST_CASE("Fold expression adds 100 elements", "[ujson][value_builder][fold]") {

@@ -1540,6 +1540,68 @@ namespace ujson::detail {
     }
 } // namespace ujson::detail
 
+namespace ujson::detail {
+    enum class key_format : std::uint8_t {
+        None,
+        SnakeCase,
+        CamelCase,
+        PascalCase
+    };
+
+    [[nodiscard]] UJSON_FORCEINLINE constexpr char to_lower_ascii(const char c) noexcept {
+        return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+    }
+
+    [[nodiscard]] UJSON_FORCEINLINE constexpr char to_upper_ascii(const char c) noexcept {
+        return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    }
+
+    [[nodiscard]] UJSON_FORCEINLINE constexpr bool is_ascii_char(const unsigned char c) noexcept {
+        return (c & 0x80u) == 0u;
+    }
+
+    [[nodiscard]] UJSON_FORCEINLINE constexpr bool is_ascii_sep(const char c) noexcept {
+        return c == '_' || c == '-' || c == ' ';
+    }
+
+    [[nodiscard]] UJSON_FORCEINLINE bool normalize_ascii(const std::string_view key, const key_format format, Arena* arena, std::string& scratch, std::string_view& out) noexcept;
+
+    struct key_policy_none {
+        static constexpr auto format = key_format::None;
+
+        [[nodiscard]] UJSON_FORCEINLINE static bool normalize(const std::string_view key, Arena* arena, std::string& scratch, std::string_view& out) noexcept {
+            out = key;
+            (void)arena;
+            (void)scratch;
+            return true;
+        }
+    };
+
+    struct key_policy_snake_case {
+        static constexpr auto format = key_format::SnakeCase;
+
+        [[nodiscard]] UJSON_FORCEINLINE static bool normalize(const std::string_view key, Arena* arena, std::string& scratch, std::string_view& out) noexcept {
+            return normalize_ascii(key, format, arena, scratch, out);
+        }
+    };
+
+    struct key_policy_camel_case {
+        static constexpr auto format = key_format::CamelCase;
+
+        [[nodiscard]] UJSON_FORCEINLINE static bool normalize(const std::string_view key, Arena* arena, std::string& scratch, std::string_view& out) noexcept {
+            return normalize_ascii(key, format, arena, scratch, out);
+        }
+    };
+
+    struct key_policy_pascal_case {
+        static constexpr auto format = key_format::PascalCase;
+
+        [[nodiscard]] UJSON_FORCEINLINE static bool normalize(const std::string_view key, Arena* arena, std::string& scratch, std::string_view& out) noexcept {
+            return normalize_ascii(key, format, arena, scratch, out);
+        }
+    };
+} // namespace ujson::detail
+
 namespace ujson {
     struct TapeStorage;
     [[nodiscard]] UJSON_FORCEINLINE TapeStorage* tape_storage(const Arena* arena) noexcept;
@@ -1665,6 +1727,14 @@ namespace ujson {
 
         void* alloc(std::size_t sz, std::size_t al = alignof(std::max_align_t));
 
+        UJSON_FORCEINLINE void set_key_format(const detail::key_format fmt) noexcept {
+            key_format_ = fmt;
+        }
+
+        [[nodiscard]] UJSON_FORCEINLINE detail::key_format key_format() const noexcept {
+            return key_format_;
+        }
+
         template <class T, class... Args>
         UJSON_FORCEINLINE T* make(Args&&... args) noexcept;
 
@@ -1679,11 +1749,14 @@ namespace ujson {
         template <class Sink, detail::StringEscapePolicy Policy>
         friend class detail::JsonWriterCoreImpl;
         friend class ValueRef;
-        friend class SaxDomHandler;
-        friend class ValueBuilder;
-        friend class NodeRef;
-        template <bool, bool, bool>
-        friend class DocumentT;
+        template <class>
+        friend class TSaxDomHandler;
+        template <class>
+        friend class TValueBuilder;
+        template <class>
+        friend class TNodeRef;
+        template <bool, bool, bool, class>
+        friend class TDocument;
         friend TapeStorage* tape_storage(const Arena*) noexcept;
 
         static constexpr bool valid_align(const std::size_t a) noexcept {
@@ -1704,6 +1777,7 @@ namespace ujson {
         std::size_t block_size_ {kDefaultBlockSize};
         std::size_t block_align_ {alignof(std::max_align_t)};
         void* tape_storage_ {};
+        detail::key_format key_format_ {detail::key_format::None};
     };
 
     template <AllocatorLike Alloc>
@@ -1722,7 +1796,7 @@ namespace ujson {
 
     inline Arena::Arena(Arena&& other) noexcept
         : allocator_(other.allocator_), alloc_fn_(other.alloc_fn_), dealloc_fn_(other.dealloc_fn_), head_(other.head_), cur_(other.cur_), block_size_(other.block_size_),
-          tape_storage_(other.tape_storage_) {
+          tape_storage_(other.tape_storage_), key_format_(other.key_format_) {
         other.head_ = nullptr;
         other.cur_ = nullptr;
         other.tape_storage_ = nullptr;
@@ -1738,6 +1812,7 @@ namespace ujson {
             cur_ = other.cur_;
             block_size_ = other.block_size_;
             tape_storage_ = other.tape_storage_;
+            key_format_ = other.key_format_;
             other.head_ = nullptr;
             other.cur_ = nullptr;
             other.tape_storage_ = nullptr;
@@ -1840,6 +1915,107 @@ namespace ujson {
 } // namespace ujson
 
 namespace ujson::detail {
+    [[nodiscard]] UJSON_FORCEINLINE bool normalize_ascii(const std::string_view key, const key_format format, Arena* arena, std::string& scratch, std::string_view& out) noexcept {
+        out = key;
+
+        if (format == key_format::None)
+            return true;
+
+        for (const unsigned char c : key)
+            if (!is_ascii_char(c))
+                return true;
+
+        scratch.clear();
+        scratch.reserve(key.size() + 4);
+
+        bool start_word = true;
+        bool first_word = true;
+        bool prev_lower = false;
+        bool prev_upper = false;
+
+        for (std::size_t i = 0; i < key.size(); ++i) {
+            const char c = key[i];
+            if (is_ascii_sep(c)) {
+                start_word = true;
+                prev_lower = false;
+                prev_upper = false;
+                continue;
+            }
+
+            const bool is_upper = c >= 'A' && c <= 'Z';
+            const bool is_lower = c >= 'a' && c <= 'z';
+            const bool is_alpha = is_upper || is_lower;
+            const bool is_digit = c >= '0' && c <= '9';
+
+            bool boundary = false;
+            if (!start_word && is_upper) {
+                if (prev_lower) {
+                    boundary = true;
+                } else if (prev_upper && i + 1 < key.size()) {
+                    const char next = key[i + 1];
+                    if (next >= 'a' && next <= 'z')
+                        boundary = true;
+                }
+            }
+
+            if (boundary)
+                start_word = true;
+
+            if (start_word && format == key_format::SnakeCase && !scratch.empty())
+                scratch.push_back('_');
+
+            char out_c = c;
+            if (is_alpha) {
+                switch (format) {
+                case key_format::SnakeCase:
+                    out_c = to_lower_ascii(c);
+                    break;
+                case key_format::CamelCase:
+                    out_c = start_word ? (first_word ? to_lower_ascii(c) : to_upper_ascii(c)) : to_lower_ascii(c);
+                    break;
+                case key_format::PascalCase:
+                    out_c = start_word ? to_upper_ascii(c) : to_lower_ascii(c);
+                    break;
+                case key_format::None:
+                    break;
+                }
+            } else if (!is_digit) {
+                start_word = true;
+                prev_lower = false;
+                prev_upper = false;
+                scratch.push_back(out_c);
+                continue;
+            }
+
+            scratch.push_back(out_c);
+
+            if (start_word) {
+                start_word = false;
+                first_word = false;
+            }
+
+            prev_lower = is_lower;
+            prev_upper = is_upper;
+        }
+
+        if (scratch == key)
+            return true;
+
+        if (!arena) {
+            out = std::string_view {scratch.data(), scratch.size()};
+            return true;
+        }
+
+        auto* dst = static_cast<char*>(arena->alloc(scratch.size() + 1u, 1u));
+        if (!dst)
+            return false;
+
+        std::memcpy(dst, scratch.data(), scratch.size());
+        dst[scratch.size()] = '\0';
+        out = std::string_view {dst, scratch.size()};
+        return true;
+    }
+
     UJSON_FORCEINLINE void emit_mask_32(std::uint32_t mask, const std::uint32_t base, std::uint32_t*& out) noexcept {
         while (mask) {
             const std::uint32_t bit = std::countr_zero(mask);
@@ -2795,14 +2971,16 @@ namespace ujson {
             const auto* t = tape_storage(arena_);
             const auto& kids = n_->data.kids;
 
-            const auto h = hash32(k.data(), k.size());
+            std::string scratch;
+            const std::string_view nk = normalize_key(k, scratch);
+            const auto h = hash32(nk.data(), nk.size());
 
             if (!tape_ready(t)) {
                 if (!kids.items)
                     return {};
 
                 for (std::uint32_t i = 0; i < kids.count; ++i) {
-                    if (Node* cand = kids.items[i]; cand && cand->key_equals(h, k))
+                    if (Node* cand = kids.items[i]; cand && cand->key_equals(h, nk))
                         return {cand, arena_};
                 }
                 return {};
@@ -2822,7 +3000,7 @@ namespace ujson {
 
                     if (s.h == h && s.pos != ObjIndex::kTomb) {
                         if (s.pos < t->pos) {
-                            if (Node* cand = t->tape + s.pos; cand && cand->key_equals(h, k))
+                            if (Node* cand = t->tape + s.pos; cand && cand->key_equals(h, nk))
                                 return {cand, arena_};
                         }
                     }
@@ -2838,7 +3016,7 @@ namespace ujson {
             for (std::uint32_t i = 0; i < kids.count; ++i) {
                 if (cur >= t->size)
                     return {};
-                if (Node* cand = t->tape + cur; cand && cand->key_equals(h, k))
+                if (Node* cand = t->tape + cur; cand && cand->key_equals(h, nk))
                     return {cand, arena_};
                 cur = subtree_next_index(t, cur);
             }
@@ -2875,6 +3053,14 @@ namespace ujson {
         UJSON_FORCEINLINE ObjRange members() const noexcept;
 
     private:
+        [[nodiscard]] UJSON_FORCEINLINE std::string_view normalize_key(const std::string_view key, std::string& scratch) const noexcept {
+            const auto fmt = arena_ ? arena_->key_format() : detail::key_format::None;
+            std::string_view out = key;
+            if (!detail::normalize_ascii(key, fmt, nullptr, scratch, out))
+                return key;
+            return out;
+        }
+
         UJSON_FORCEINLINE static std::uint32_t next_pow2(const std::uint32_t v) noexcept {
             if (v <= 1)
                 return 1;
@@ -3229,8 +3415,8 @@ namespace ujson {
         }
 
     private:
-        template <bool, bool, bool>
-        friend class DocumentT;
+        template <bool, bool, bool, class>
+        friend class TDocument;
 
         enum class State : std::uint8_t {
             ExpectValueOrEnd,
@@ -3859,10 +4045,11 @@ fallback_double:
         std::uint32_t stack_cap_ {64};
     };
 
-    class SaxDomHandler {
+    template <class KeyPolicy = detail::key_policy_none>
+    class TSaxDomHandler {
     public:
-        explicit SaxDomHandler(Arena& a, const std::uint32_t max_depth = kDefaultMaxDepth): arena_(a), max_depth_(max_depth ? max_depth : 1u) {
-
+        explicit TSaxDomHandler(Arena& a, const std::uint32_t max_depth = kDefaultMaxDepth): arena_(a), max_depth_(max_depth ? max_depth : 1u) {
+            arena_.set_key_format(KeyPolicy::format);
             sp_ = 0;
             root_ = nullptr;
 
@@ -4052,8 +4239,15 @@ fallback_double:
                     set_err(ErrorCode::BuilderMissingKey);
                     return false;
                 }
-                child->key = pending_key_;
-                child->key_hash = hash32(pending_key_.data(), pending_key_.size());
+                std::string scratch;
+                std::string_view normalized;
+                if (!KeyPolicy::normalize(pending_key_, &arena_, scratch, normalized)) {
+                    set_err(ErrorCode::WriterOverflow);
+                    return false;
+                }
+
+                child->key = normalized;
+                child->key_hash = hash32(normalized.data(), normalized.size());
                 pending_key_ = {};
                 has_pending_key_ = false;
             }
@@ -4215,19 +4409,21 @@ fallback_double:
         bool has_pending_key_ {};
     };
 
+    using SaxDomHandler = TSaxDomHandler<>;
+
     template <class T>
     concept HasCStringData = requires(T t) {
         { std::as_const(t).data() } -> std::convertible_to<const char*>;
         { t.size() } -> std::convertible_to<std::size_t>;
     };
 
-    template <bool ShouldCopyInput = false, bool MaterializeStrings = false, bool StrictUtf8 = true>
-    class DocumentT : public ArenaHolder {
+    template <bool ShouldCopyInput = false, bool MaterializeStrings = false, bool StrictUtf8 = true, class KeyPolicy = detail::key_policy_none>
+    class TDocument : public ArenaHolder {
     public:
-        DocumentT() = default;
+        TDocument() = default;
 
-        [[nodiscard]] static DocumentT parse(HasCStringData auto&& input, Arena& a, const std::uint32_t max_depth = kDefaultMaxDepth) {
-            DocumentT doc(a);
+        [[nodiscard]] static TDocument parse(HasCStringData auto&& input, Arena& a, const std::uint32_t max_depth = kDefaultMaxDepth) {
+            TDocument doc(a);
 
             if constexpr (ShouldCopyInput) {
                 doc.input_own_.assign(input.data(), input.size());
@@ -4241,8 +4437,8 @@ fallback_double:
         }
 
         template <AllocatorLike Allocator>
-        [[nodiscard]] static DocumentT parse(HasCStringData auto&& input, Allocator& alloc, const std::uint32_t max_depth = kDefaultMaxDepth) {
-            DocumentT doc(alloc);
+        [[nodiscard]] static TDocument parse(HasCStringData auto&& input, Allocator& alloc, const std::uint32_t max_depth = kDefaultMaxDepth) {
+            TDocument doc(alloc);
 
             if constexpr (ShouldCopyInput) {
                 doc.input_own_.assign(input.data(), input.size());
@@ -4255,8 +4451,8 @@ fallback_double:
             return doc;
         }
 
-        [[nodiscard]] static DocumentT parse(HasCStringData auto&& input, const std::uint32_t max_depth = kDefaultMaxDepth) {
-            DocumentT doc(true);
+        [[nodiscard]] static TDocument parse(HasCStringData auto&& input, const std::uint32_t max_depth = kDefaultMaxDepth) {
+            TDocument doc(true);
 
             if constexpr (ShouldCopyInput) {
                 doc.input_own_.assign(input.data(), input.size());
@@ -4270,23 +4466,23 @@ fallback_double:
         }
 
         template <size_t N>
-        [[nodiscard]] static DocumentT parse(const char (&input)[N], Arena& a, const std::uint32_t max_depth = 512) {
-            DocumentT doc(a);
+        [[nodiscard]] static TDocument parse(const char (&input)[N], Arena& a, const std::uint32_t max_depth = 512) {
+            TDocument doc(a);
             doc.input_view_ = std::string_view {input, (N ? N - 1 : 0)};
             doc.parse(max_depth);
             return doc;
         }
 
         template <AllocatorLike Allocator, size_t N>
-        [[nodiscard]] static DocumentT parse(const char (&input)[N], Allocator& alloc, const std::uint32_t max_depth = 512) {
-            DocumentT doc(alloc);
+        [[nodiscard]] static TDocument parse(const char (&input)[N], Allocator& alloc, const std::uint32_t max_depth = 512) {
+            TDocument doc(alloc);
             doc.input_view_ = std::string_view {input, (N ? N - 1 : 0)};
             doc.parse(max_depth);
             return doc;
         }
         template <size_t N>
-        [[nodiscard]] static DocumentT parse(const char (&input)[N], const std::uint32_t max_depth = 512) {
-            DocumentT doc(true);
+        [[nodiscard]] static TDocument parse(const char (&input)[N], const std::uint32_t max_depth = 512) {
+            TDocument doc(true);
             doc.input_view_ = std::string_view {input, (N ? N - 1 : 0)};
             doc.parse(max_depth);
             return doc;
@@ -4340,8 +4536,8 @@ fallback_double:
 
             arena().tape_storage_ = storage;
 
-            SaxDomHandler builder(arena(), max_depth);
-            CoreParser<MaterializeStrings, StrictUtf8, SaxDomHandler> p(builder, input_view_, si, max_depth);
+            TSaxDomHandler<KeyPolicy> builder(arena(), max_depth);
+            CoreParser<MaterializeStrings, StrictUtf8, TSaxDomHandler<KeyPolicy>> p(builder, input_view_, si, max_depth);
 
             err_ = p.parse_root();
             if (!builder.ok())
@@ -4361,19 +4557,19 @@ fallback_double:
     };
 
     // default production document
-    using Document = DocumentT<>;
+    using Document = TDocument<>;
 
     // zero-copy view document
-    using DocumentView = DocumentT<>;
+    using DocumentView = TDocument<>;
 
     // owned input document
-    using DocumentOwnedInput = DocumentT<true>;
+    using DocumentOwnedInput = TDocument<true>;
 
     // fully owning (input + strings)
-    using DocumentFull = DocumentT<true, true>;
+    using DocumentFull = TDocument<true, true>;
 
     // fastest possible
-    using DocumentFast = DocumentT<false, false, false>;
+    using DocumentFast = TDocument<false, false, false>;
 
     namespace detail {
         enum class StringEscapePolicy : std::uint8_t {
@@ -5014,25 +5210,36 @@ fallback_double:
         return validate<StrictUtf8>(std::string_view {input, (N ? N - 1 : 0)}, max_depth);
     }
 
-    template <class Handler>
+    template <class Handler, class KeyPolicy = detail::key_policy_none>
     class SaxParser : public ArenaHolder {
     public:
-        explicit SaxParser(Handler& h, HasCStringData auto&& s, const std::uint32_t max_depth = 512): ArenaHolder {true}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) { }
-        explicit SaxParser(Handler& h, HasCStringData auto&& s, Arena& a, const std::uint32_t max_depth = 512): ArenaHolder {a}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) { }
+        explicit SaxParser(Handler& h, HasCStringData auto&& s, const std::uint32_t max_depth = 512): ArenaHolder {true}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
+        explicit SaxParser(Handler& h, HasCStringData auto&& s, Arena& a, const std::uint32_t max_depth = 512): ArenaHolder {a}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <AllocatorLike Allocator>
         explicit SaxParser(Handler& h, HasCStringData auto&& s, Allocator& allocator, const std::uint32_t max_depth = 512)
-            : ArenaHolder {allocator}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) { }
+            : ArenaHolder {allocator}, h_(h), s_ {s.data(), s.size()}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <size_t N>
-        explicit SaxParser(Handler& h, const char (&s)[N], const std::uint32_t max_depth = 512): ArenaHolder {true}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) { }
+        explicit SaxParser(Handler& h, const char (&s)[N], const std::uint32_t max_depth = 512): ArenaHolder {true}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <size_t N>
-        explicit SaxParser(Handler& h, const char (&s)[N], Arena& a, const std::uint32_t max_depth = 512): ArenaHolder {a}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) { }
+        explicit SaxParser(Handler& h, const char (&s)[N], Arena& a, const std::uint32_t max_depth = 512): ArenaHolder {a}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <size_t N, class Allocator>
-        explicit SaxParser(Handler& h, const char (&s)[N], Allocator& allocator, const std::uint32_t max_depth = 512)
-            : ArenaHolder {allocator}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) { }
+        explicit SaxParser(Handler& h, const char (&s)[N], Allocator& allocator, const std::uint32_t max_depth = 512): ArenaHolder {allocator}, h_(h), s_ {s, (N ? N - 1 : 0)}, max_depth_(max_depth) {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <bool MaterializeStrings = false, bool StrictUtf8 = true>
         UJSON_FORCEINLINE ParseError parse() {
@@ -5049,8 +5256,8 @@ fallback_double:
         std::uint32_t max_depth_ {512};
     };
 
-    template <class Handler>
-    struct SaxParser<Handler>::SaxAdapter {
+    template <class Handler, class KeyPolicy>
+    struct SaxParser<Handler, KeyPolicy>::SaxAdapter {
         Handler& h;
         Arena& arena_ref;
 
@@ -5080,7 +5287,11 @@ fallback_double:
             return h.on_string(v);
         }
         bool on_key(std::string_view k) {
-            return h.on_key(k);
+            std::string scratch;
+            std::string_view normalized;
+            if (!KeyPolicy::normalize(k, &arena_ref, scratch, normalized))
+                return false;
+            return h.on_key(normalized);
         }
         bool on_array_begin() {
             return h.on_array_begin();
@@ -5096,19 +5307,26 @@ fallback_double:
         }
     };
 
-    class DomBuilder : public ArenaHolder {
+    template <class KeyPolicy = detail::key_policy_none>
+    class TDomBuilder : public ArenaHolder {
     public:
-        explicit DomBuilder(): ArenaHolder {true} { }
-        explicit DomBuilder(Arena& arena): ArenaHolder {arena} { }
+        explicit TDomBuilder(): ArenaHolder {true} {
+            arena_->set_key_format(KeyPolicy::format);
+        }
+        explicit TDomBuilder(Arena& arena): ArenaHolder {arena} {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         template <AllocatorLike Allocator>
-        explicit DomBuilder(Allocator& alloc): ArenaHolder {alloc} { }
+        explicit TDomBuilder(Allocator& alloc): ArenaHolder {alloc} {
+            arena_->set_key_format(KeyPolicy::format);
+        }
 
         class ObjectScope {
-            DomBuilder& b_;
+            TDomBuilder& b_;
 
         public:
-            explicit ObjectScope(DomBuilder& b): b_(b) { }
+            explicit ObjectScope(TDomBuilder& b): b_(b) { }
             ~ObjectScope() {
                 if (b_.ok())
                     (void)b_.pop();
@@ -5116,10 +5334,10 @@ fallback_double:
         };
 
         class ArrayScope {
-            DomBuilder& b_;
+            TDomBuilder& b_;
 
         public:
-            explicit ArrayScope(DomBuilder& b): b_(b) { }
+            explicit ArrayScope(TDomBuilder& b): b_(b) { }
             ~ArrayScope() {
                 if (b_.ok())
                     (void)b_.pop();
@@ -5127,7 +5345,7 @@ fallback_double:
         };
 
         template <class Fn>
-            requires(std::invocable<Fn> || std::invocable<Fn, DomBuilder&>)
+            requires(std::invocable<Fn> || std::invocable<Fn, TDomBuilder&>)
         Node* object(Fn&& fn) {
             if (!ok())
                 return nullptr;
@@ -5143,7 +5361,7 @@ fallback_double:
             ObjectScope scope {*this};
 
             if (ok()) {
-                if constexpr (std::invocable<Fn, DomBuilder&>)
+                if constexpr (std::invocable<Fn, TDomBuilder&>)
                     std::forward<Fn>(fn)(*this);
                 else
                     std::forward<Fn>(fn)();
@@ -5153,7 +5371,7 @@ fallback_double:
         }
 
         template <class Fn>
-            requires(std::invocable<Fn> || std::invocable<Fn, DomBuilder&>)
+            requires(std::invocable<Fn> || std::invocable<Fn, TDomBuilder&>)
         Node* array(Fn&& fn) {
             if (!ok())
                 return nullptr;
@@ -5169,7 +5387,7 @@ fallback_double:
             ArrayScope scope {*this};
 
             if (ok()) {
-                if constexpr (std::invocable<Fn, DomBuilder&>)
+                if constexpr (std::invocable<Fn, TDomBuilder&>)
                     std::forward<Fn>(fn)(*this);
                 else
                     std::forward<Fn>(fn)();
@@ -5179,10 +5397,10 @@ fallback_double:
         }
 
         class KeyProxy {
-            DomBuilder& b_;
+            TDomBuilder& b_;
 
         public:
-            KeyProxy(DomBuilder& b, const std::string_view k): b_(b) {
+            KeyProxy(TDomBuilder& b, const std::string_view k): b_(b) {
                 if (!b_.ok()) {
                     b_.pending_key_ = {};
                     b_.has_pending_key_ = false;
@@ -5385,8 +5603,15 @@ fallback_double:
                     set_err(ErrorCode::BuilderMissingKey);
                     return nullptr;
                 }
-                child->key = pending_key_;
-                child->key_hash = hash32(pending_key_.data(), pending_key_.size());
+                std::string scratch;
+                std::string_view normalized;
+                if (!KeyPolicy::normalize(pending_key_, arena_, scratch, normalized)) {
+                    set_err(ErrorCode::WriterOverflow);
+                    return nullptr;
+                }
+
+                child->key = normalized;
+                child->key_hash = hash32(normalized.data(), normalized.size());
                 pending_key_ = {};
                 has_pending_key_ = false;
             }
@@ -5486,6 +5711,8 @@ fallback_double:
         ParseError err_ {};
     };
 
+    using DomBuilder = TDomBuilder<>;
+
 } // namespace ujson
 
 namespace ujson {
@@ -5505,9 +5732,13 @@ namespace ujson {
         JsonEscaped, // \uXXXX for non-ASCII (ASCII-only output)
     };
 
-    class NodeRef {
+    template <class KeyPolicy = detail::key_policy_none>
+    class TValueBuilder;
+
+    template <class KeyPolicy = detail::key_policy_none>
+    class TNodeRef {
     public:
-        NodeRef() = default;
+        TNodeRef() = default;
 
         [[nodiscard]] UJSON_FORCEINLINE bool ok() const noexcept;
         [[nodiscard]] UJSON_FORCEINLINE const ParseError& error() const noexcept;
@@ -5540,34 +5771,34 @@ namespace ujson {
             return type() == Type::Null;
         }
 
-        UJSON_FORCEINLINE const NodeRef& set_object(std::uint32_t cap = 16) const;
-        UJSON_FORCEINLINE const NodeRef& set_array(std::uint32_t cap = 16) const;
+        UJSON_FORCEINLINE const TNodeRef& set_object(std::uint32_t cap = 16) const;
+        UJSON_FORCEINLINE const TNodeRef& set_array(std::uint32_t cap = 16) const;
 
         template <class T>
-        UJSON_FORCEINLINE NodeRef& operator=(T&& v);
+        UJSON_FORCEINLINE TNodeRef& operator=(T&& v);
 
         // object
-        NodeRef operator[](std::string_view key) const; // create-missing as null
-        [[nodiscard]] UJSON_FORCEINLINE NodeRef get(std::string_view key) const; // non-creating
+        TNodeRef operator[](std::string_view key) const; // create-missing as null
+        [[nodiscard]] UJSON_FORCEINLINE TNodeRef get(std::string_view key) const; // non-creating
         [[nodiscard]] UJSON_FORCEINLINE bool contains(std::string_view key) const;
 
         template <class T>
-        NodeRef add(std::string_view key, T&& v);
+        TNodeRef add(std::string_view key, T&& v);
 
-        [[nodiscard]] NodeRef add_object(std::string_view key, std::uint32_t cap = 16) const;
-        [[nodiscard]] NodeRef add_array(std::string_view key, std::uint32_t cap = 16) const;
+        [[nodiscard]] TNodeRef add_object(std::string_view key, std::uint32_t cap = 16) const;
+        [[nodiscard]] TNodeRef add_array(std::string_view key, std::uint32_t cap = 16) const;
 
         UJSON_FORCEINLINE bool erase(std::string_view key, EraseMode mode = EraseMode::Stable) const;
 
         // array
-        UJSON_FORCEINLINE NodeRef operator[](std::size_t idx) const; // expand with nulls
-        [[nodiscard]] UJSON_FORCEINLINE NodeRef at(std::size_t idx) const; // no expand
+        UJSON_FORCEINLINE TNodeRef operator[](std::size_t idx) const; // expand with nulls
+        [[nodiscard]] UJSON_FORCEINLINE TNodeRef at(std::size_t idx) const; // no expand
 
         template <class T>
-        UJSON_FORCEINLINE NodeRef add(T&& v);
+        TNodeRef add(T&& v);
 
-        [[nodiscard]] UJSON_FORCEINLINE NodeRef add_object(std::uint32_t cap = 16) const;
-        [[nodiscard]] UJSON_FORCEINLINE NodeRef add_array(std::uint32_t cap = 16) const;
+        [[nodiscard]] UJSON_FORCEINLINE TNodeRef add_object(std::uint32_t cap = 16) const;
+        [[nodiscard]] UJSON_FORCEINLINE TNodeRef add_array(std::uint32_t cap = 16) const;
 
         [[nodiscard]] std::uint32_t size() const noexcept {
             const Node* n = raw();
@@ -5575,16 +5806,17 @@ namespace ujson {
         }
 
     private:
-        friend class ValueBuilder;
+        friend class TValueBuilder<KeyPolicy>;
 
-        ValueBuilder* b_ {};
+        TValueBuilder<KeyPolicy>* b_ {};
         mutable Node** slot_ {};
         Node* parent_ {}; // parent container (null for root)
 
-        explicit NodeRef(ValueBuilder* b, Node** slot, Node* parent): b_(b), slot_(slot), parent_(parent) { }
+        explicit TNodeRef(TValueBuilder<KeyPolicy>* b, Node** slot, Node* parent): b_(b), slot_(slot), parent_(parent) { }
     };
 
-    class ValueBuilder : public ArenaHolder {
+    template <class KeyPolicy>
+    class TValueBuilder : public ArenaHolder {
     public:
         struct Options {
             StringPolicy strings = StringPolicy::Copy;
@@ -5593,16 +5825,16 @@ namespace ujson {
             float max_load = 0.70f;
         };
 
-        explicit ValueBuilder(const Options opt = {}): ArenaHolder {true}, opt_(opt) {
+        explicit TValueBuilder(const Options opt = {}): ArenaHolder {true}, opt_(opt) {
             initialize();
         }
 
-        explicit ValueBuilder(Arena& arena, const Options opt = {}): ArenaHolder {arena}, opt_(opt) {
+        explicit TValueBuilder(Arena& arena, const Options opt = {}): ArenaHolder {arena}, opt_(opt) {
             initialize();
         }
 
         template <AllocatorLike Allocator>
-        explicit ValueBuilder(Allocator& alloc, const Options opt = {}): ArenaHolder {alloc}, opt_(opt) {
+        explicit TValueBuilder(Allocator& alloc, const Options opt = {}): ArenaHolder {alloc}, opt_(opt) {
             initialize();
         }
 
@@ -5622,8 +5854,8 @@ namespace ujson {
             return root_;
         }
 
-        [[nodiscard]] UJSON_FORCEINLINE NodeRef root() noexcept {
-            return NodeRef {this, &root_, nullptr};
+        [[nodiscard]] UJSON_FORCEINLINE TNodeRef<KeyPolicy> root() noexcept {
+            return TNodeRef<KeyPolicy> {this, &root_, nullptr};
         }
 
         [[nodiscard]] std::string encode(const bool pretty = false) const {
@@ -5637,9 +5869,10 @@ namespace ujson {
         }
 
     private:
-        friend class NodeRef;
+        friend class TNodeRef<KeyPolicy>;
 
         void initialize() {
+            arena_->set_key_format(KeyPolicy::format);
             root_ = arena().make<Node>();
             if (!root_) {
                 err_.code = ErrorCode::WriterOverflow;
@@ -5695,6 +5928,28 @@ namespace ujson {
             return n;
         }
 
+        [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_store(const std::string_view key, std::string_view& out) {
+            std::string scratch;
+            if (!KeyPolicy::normalize(key, arena_, scratch, out)) {
+                set_err(ErrorCode::WriterOverflow);
+                return false;
+            }
+
+            if (opt_.strings == StringPolicy::Copy && out.data() == key.data() && out.size() == key.size()) {
+                out = materialize(out);
+                if (out.data() == nullptr && !out.empty()) {
+                    set_err(ErrorCode::WriterOverflow);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_lookup(const std::string_view key, std::string& scratch, std::string_view& out) const noexcept {
+            return KeyPolicy::normalize(key, nullptr, scratch, out);
+        }
+
         [[nodiscard]] Node* make_container(const Type t, std::uint32_t cap) {
             cap = std::max(1u, cap);
             Node* n = arena().make<Node>();
@@ -5739,7 +5994,7 @@ namespace ujson {
             return bigger;
         }
 
-        bool ensure_container(const NodeRef& self, const Type t, const std::uint32_t cap) {
+        bool ensure_container(const TNodeRef<KeyPolicy>& self, const Type t, const std::uint32_t cap) {
             if (!ok() || !normalize_slot(self))
                 return false;
 
@@ -5947,22 +6202,28 @@ namespace ujson {
             Node** slot {};
             std::uint32_t pos {};
             std::uint32_t h {};
+            std::string_view key {};
             bool found {};
         };
 
-        FindRes obj_find(Node* obj, const std::string_view key) {
+        FindRes obj_find(Node* obj, const std::string_view key, std::string& scratch) {
             FindRes r {};
             if (!obj || obj->type != Type::Object)
                 return r;
 
-            r.h = hash32(key.data(), key.size());
+            std::string_view nk = key;
+            if (!normalize_key_lookup(key, scratch, nk))
+                return r;
+
+            r.key = nk;
+            r.h = hash32(nk.data(), nk.size());
             const auto& kids = obj->data.kids;
 
             if (kids.count >= 12)
                 ensure_obj_index(obj);
 
             if (obj_index(obj)) {
-                if (const ObjIndex::Slot* s = objindex_find_slot(obj, key, r.h)) {
+                if (const ObjIndex::Slot* s = objindex_find_slot(obj, nk, r.h)) {
                     if (s->pos < kids.count) {
                         r.pos = s->pos;
                         r.slot = &kids.items[r.pos];
@@ -5972,7 +6233,7 @@ namespace ujson {
 
                     rebuild_index(obj);
 
-                    if (const ObjIndex::Slot* s2 = objindex_find_slot(obj, key, r.h)) {
+                    if (const ObjIndex::Slot* s2 = objindex_find_slot(obj, nk, r.h)) {
                         if (s2->pos < kids.count) {
                             r.pos = s2->pos;
                             r.slot = &kids.items[r.pos];
@@ -5984,7 +6245,7 @@ namespace ujson {
             }
 
             for (std::uint32_t i = 0; i < kids.count; ++i) {
-                if (const Node* cand = kids.items[i]; cand && cand->key_equals(r.h, key)) {
+                if (const Node* cand = kids.items[i]; cand && cand->key_equals(r.h, nk)) {
                     r.slot = &kids.items[i];
                     r.pos = i;
                     r.found = true;
@@ -5995,7 +6256,7 @@ namespace ujson {
             return r;
         }
 
-        Node** obj_append_slot(const NodeRef& self) {
+        Node** obj_append_slot(const TNodeRef<KeyPolicy>& self) {
             Node* obj = self.raw();
             if (!obj || obj->type != Type::Object) {
                 set_err(ErrorCode::BuilderInvalidState);
@@ -6015,7 +6276,7 @@ namespace ujson {
             return &k.items[k.count++];
         }
 
-        Node** arr_append_slot(const NodeRef& self) {
+        Node** arr_append_slot(const TNodeRef<KeyPolicy>& self) {
             Node* arr = self.raw();
             if (!arr || arr->type != Type::Array) {
                 set_err(ErrorCode::BuilderInvalidState);
@@ -6034,7 +6295,7 @@ namespace ujson {
             return &k.items[k.count++];
         }
 
-        NodeRef arr_push_null(const NodeRef& self) {
+        TNodeRef<KeyPolicy> arr_push_null(const TNodeRef<KeyPolicy>& self) {
             Node** slot = arr_append_slot(self);
             if (!slot)
                 return {};
@@ -6042,10 +6303,10 @@ namespace ujson {
             if (!nn)
                 return {};
             *slot = nn;
-            return NodeRef {this, slot, self.raw()};
+            return TNodeRef<KeyPolicy> {this, slot, self.raw()};
         }
 
-        NodeRef arr_get_or_expand(const NodeRef& self, const std::size_t idx) {
+        TNodeRef<KeyPolicy> arr_get_or_expand(const TNodeRef<KeyPolicy>& self, const std::size_t idx) {
             if (!ok())
                 return {};
             (void)self.set_array();
@@ -6061,7 +6322,7 @@ namespace ujson {
                     return {};
             }
 
-            return NodeRef {this, &arr->data.kids.items[static_cast<std::uint32_t>(idx)], arr};
+            return TNodeRef<KeyPolicy> {this, &arr->data.kids.items[static_cast<std::uint32_t>(idx)], arr};
         }
 
         template <class T>
@@ -6126,7 +6387,7 @@ namespace ujson {
         }
 
         template <class T>
-        void assign_value(NodeRef& self, T&& v) {
+        void assign_value(TNodeRef<KeyPolicy>& self, T&& v) {
             if (!ok() || !normalize_slot(self))
                 return;
 
@@ -6152,7 +6413,7 @@ namespace ujson {
         }
 
         template <class T>
-        NodeRef obj_insert_or_assign(NodeRef& self, const std::string_view key, T&& v) {
+        TNodeRef<KeyPolicy> obj_insert_or_assign(TNodeRef<KeyPolicy>& self, const std::string_view key, T&& v) {
             if (!ok() || !normalize_slot(self))
                 return {};
 
@@ -6161,7 +6422,8 @@ namespace ujson {
             if (!obj)
                 return {};
 
-            const FindRes f = obj_find(obj, key);
+            std::string scratch;
+            const FindRes f = obj_find(obj, key, scratch);
             if (f.found && f.slot && *f.slot) {
                 const Node* old = *f.slot;
 
@@ -6174,7 +6436,7 @@ namespace ujson {
 
                 *f.slot = nn;
 
-                return NodeRef {this, f.slot, obj};
+                return TNodeRef<KeyPolicy> {this, f.slot, obj};
             }
 
             Node** slot = obj_append_slot(self);
@@ -6189,16 +6451,20 @@ namespace ujson {
             if (!nn)
                 return {};
 
-            nn->key = materialize(key);
-            nn->key_hash = f.h;
+            std::string_view normalized;
+            if (!normalize_key_store(key, normalized))
+                return {};
+
+            nn->key = normalized;
+            nn->key_hash = hash32(normalized.data(), normalized.size());
 
             *slot = nn;
             objindex_insert(obj, nn);
 
-            return NodeRef {this, slot, obj};
+            return TNodeRef<KeyPolicy> {this, slot, obj};
         }
 
-        bool obj_erase(const NodeRef& self, const std::string_view key, const EraseMode mode) {
+        bool obj_erase(const TNodeRef<KeyPolicy>& self, const std::string_view key, const EraseMode mode) {
             if (!ok() || !normalize_slot(self))
                 return false;
 
@@ -6210,14 +6476,16 @@ namespace ujson {
             if (k.count == 0)
                 return false;
 
-            const FindRes f = obj_find(obj, key);
+            std::string scratch;
+            const FindRes f = obj_find(obj, key, scratch);
             if (!f.found || !f.slot || !*f.slot)
                 return false;
 
             const Node* victim = *f.slot;
-            const std::uint32_t h = victim->key_hash != kInvalidHash ? victim->key_hash : hash32(key.data(), key.size());
+            const std::string_view nk = f.key.empty() ? key : f.key;
+            const std::uint32_t h = victim->key_hash != kInvalidHash ? victim->key_hash : hash32(nk.data(), nk.size());
 
-            objindex_erase(obj, key, h);
+            objindex_erase(obj, nk, h);
 
             const std::uint32_t pos = f.pos;
 
@@ -6586,7 +6854,7 @@ namespace ujson {
             return materialize_json_escaped(in);
         }
 
-        static bool normalize_slot(const NodeRef& self) {
+        static bool normalize_slot(const TNodeRef<KeyPolicy>& self) {
             if (!self.slot_)
                 return false;
             if (!self.parent_)
@@ -6629,38 +6897,44 @@ namespace ujson {
         ParseError err_ {};
     };
 
-    UJSON_FORCEINLINE bool NodeRef::ok() const noexcept {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE bool TNodeRef<KeyPolicy>::ok() const noexcept {
         if (!b_ || !b_->ok())
             return false;
-        const auto* self = const_cast<NodeRef*>(this);
-        return ValueBuilder::normalize_slot(*self) && self->slot_;
+        const auto* self = const_cast<TNodeRef<KeyPolicy>*>(this);
+        return TValueBuilder<KeyPolicy>::normalize_slot(*self) && self->slot_;
     }
 
-    UJSON_FORCEINLINE const ParseError& NodeRef::error() const noexcept {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE const ParseError& TNodeRef<KeyPolicy>::error() const noexcept {
         static ParseError dummy {};
         return b_ ? b_->error() : dummy;
     }
 
-    UJSON_FORCEINLINE const NodeRef& NodeRef::set_object(const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE const TNodeRef<KeyPolicy>& TNodeRef<KeyPolicy>::set_object(const std::uint32_t cap) const {
         if (ok())
             (void)b_->ensure_container(*this, Type::Object, cap);
         return *this;
     }
 
-    UJSON_FORCEINLINE const NodeRef& NodeRef::set_array(const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE const TNodeRef<KeyPolicy>& TNodeRef<KeyPolicy>::set_array(const std::uint32_t cap) const {
         if (ok())
             (void)b_->ensure_container(*this, Type::Array, cap);
         return *this;
     }
 
+    template <class KeyPolicy>
     template <class T>
-    UJSON_FORCEINLINE NodeRef& NodeRef::operator=(T&& v) {
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy>& TNodeRef<KeyPolicy>::operator=(T&& v) {
         if (ok())
             b_->assign_value(*this, std::forward<T>(v));
         return *this;
     }
 
-    inline NodeRef NodeRef::operator[](const std::string_view key) const {
+    template <class KeyPolicy>
+    inline TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::operator[](const std::string_view key) const {
         if (!ok())
             return {};
 
@@ -6669,8 +6943,9 @@ namespace ujson {
         if (!obj)
             return {};
 
-        if (const auto f = b_->obj_find(obj, key); f.found && f.slot)
-            return NodeRef {b_, f.slot, obj};
+        std::string scratch;
+        if (const auto f = b_->obj_find(obj, key, scratch); f.found && f.slot)
+            return TNodeRef<KeyPolicy> {b_, f.slot, obj};
 
         Node** slot = b_->obj_append_slot(*this);
         if (!slot)
@@ -6684,38 +6959,49 @@ namespace ujson {
         if (!nn)
             return {};
 
-        nn->key = b_->materialize(key);
+        std::string_view normalized;
+        if (!b_->normalize_key_store(key, normalized))
+            return {};
+
+        nn->key = normalized;
+        nn->key_hash = hash32(nn->key.data(), nn->key.size());
+        nn->key = normalized;
         nn->key_hash = hash32(nn->key.data(), nn->key.size());
 
         *slot = nn;
         b_->objindex_insert(obj, nn);
 
-        return NodeRef {b_, slot, obj};
+        return TNodeRef<KeyPolicy> {b_, slot, obj};
     }
 
-    UJSON_FORCEINLINE NodeRef NodeRef::get(const std::string_view key) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::get(const std::string_view key) const {
         if (!ok())
             return {};
         Node* obj = raw();
         if (!obj || obj->type != Type::Object)
             return {};
-        if (const auto f = b_->obj_find(obj, key); f.found && f.slot)
-            return NodeRef {b_, f.slot, obj};
+        std::string scratch;
+        if (const auto f = b_->obj_find(obj, key, scratch); f.found && f.slot)
+            return TNodeRef<KeyPolicy> {b_, f.slot, obj};
         return {};
     }
 
-    UJSON_FORCEINLINE bool NodeRef::contains(const std::string_view key) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE bool TNodeRef<KeyPolicy>::contains(const std::string_view key) const {
         return static_cast<bool>(get(key).raw());
     }
 
+    template <class KeyPolicy>
     template <class T>
-    UJSON_FORCEINLINE NodeRef NodeRef::add(std::string_view key, T&& v) {
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add(std::string_view key, T&& v) {
         if (!ok())
             return {};
         return b_->obj_insert_or_assign(*this, key, std::forward<T>(v));
     }
 
-    inline NodeRef NodeRef::add_object(const std::string_view key, const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    inline TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add_object(const std::string_view key, const std::uint32_t cap) const {
         if (!ok())
             return {};
         (void)set_object();
@@ -6728,15 +7014,20 @@ namespace ujson {
         if (!child)
             return {};
 
-        child->key = b_->materialize(key);
+        std::string_view normalized;
+        if (!b_->normalize_key_store(key, normalized))
+            return {};
+
+        child->key = normalized;
         child->key_hash = hash32(child->key.data(), child->key.size());
 
         *slot = child;
         b_->objindex_insert(raw(), child);
-        return NodeRef {b_, slot, raw()};
+        return TNodeRef<KeyPolicy> {b_, slot, raw()};
     }
 
-    inline NodeRef NodeRef::add_array(const std::string_view key, const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    inline TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add_array(const std::string_view key, const std::uint32_t cap) const {
         if (!ok())
             return {};
         (void)set_object();
@@ -6749,28 +7040,35 @@ namespace ujson {
         if (!child)
             return {};
 
-        child->key = b_->materialize(key);
+        std::string_view normalized;
+        if (!b_->normalize_key_store(key, normalized))
+            return {};
+
+        child->key = normalized;
         child->key_hash = hash32(child->key.data(), child->key.size());
 
         *slot = child;
         b_->objindex_insert(raw(), child);
-        return NodeRef {b_, slot, raw()};
+        return TNodeRef<KeyPolicy> {b_, slot, raw()};
     }
 
-    UJSON_FORCEINLINE bool NodeRef::erase(const std::string_view key, const EraseMode mode) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE bool TNodeRef<KeyPolicy>::erase(const std::string_view key, const EraseMode mode) const {
         if (!ok())
             return false;
         (void)set_object();
         return b_->obj_erase(*this, key, mode);
     }
 
-    UJSON_FORCEINLINE NodeRef NodeRef::operator[](const std::size_t idx) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::operator[](const std::size_t idx) const {
         if (!ok())
             return {};
-        return b_->arr_get_or_expand(const_cast<NodeRef&>(*this), idx);
+        return b_->arr_get_or_expand(const_cast<TNodeRef<KeyPolicy>&>(*this), idx);
     }
 
-    UJSON_FORCEINLINE NodeRef NodeRef::at(const std::size_t idx) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::at(const std::size_t idx) const {
         if (!ok())
             return {};
         Node* arr = raw();
@@ -6779,11 +7077,12 @@ namespace ujson {
         const auto& k = arr->data.kids;
         if (idx >= k.count)
             return {};
-        return NodeRef {b_, &k.items[static_cast<std::uint32_t>(idx)], arr};
+        return TNodeRef<KeyPolicy> {b_, &k.items[static_cast<std::uint32_t>(idx)], arr};
     }
 
+    template <class KeyPolicy>
     template <class T>
-    UJSON_FORCEINLINE NodeRef NodeRef::add(T&& v) {
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add(T&& v) {
         if (!ok())
             return {};
         (void)set_array();
@@ -6797,10 +7096,11 @@ namespace ujson {
             return {};
 
         *slot = nn;
-        return NodeRef {b_, slot, raw()};
+        return TNodeRef<KeyPolicy> {b_, slot, raw()};
     }
 
-    UJSON_FORCEINLINE NodeRef NodeRef::add_object(const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add_object(const std::uint32_t cap) const {
         if (!ok())
             return {};
         (void)set_array();
@@ -6814,10 +7114,11 @@ namespace ujson {
             return {};
 
         *slot = child;
-        return NodeRef {b_, slot, raw()};
+        return TNodeRef<KeyPolicy> {b_, slot, raw()};
     }
 
-    UJSON_FORCEINLINE NodeRef NodeRef::add_array(const std::uint32_t cap) const {
+    template <class KeyPolicy>
+    UJSON_FORCEINLINE TNodeRef<KeyPolicy> TNodeRef<KeyPolicy>::add_array(const std::uint32_t cap) const {
         if (!ok())
             return {};
         (void)set_array();
@@ -6831,8 +7132,11 @@ namespace ujson {
             return {};
 
         *slot = child;
-        return NodeRef {b_, slot, raw()};
+        return TNodeRef<KeyPolicy> {b_, slot, raw()};
     }
+
+    using ValueBuilder = TValueBuilder<>;
+    using NodeRef = TNodeRef<>;
 
 } // namespace ujson
 

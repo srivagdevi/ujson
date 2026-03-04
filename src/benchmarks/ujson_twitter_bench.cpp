@@ -1,12 +1,12 @@
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <ujson/ujson.hpp>
+
 #include <rapidjson/document.h>
 #include <rapidjson/reader.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-
-#include <ujson/ujson.hpp>
 
 #include <fstream>
 #include <iostream>
@@ -20,8 +20,6 @@
     #include <sys/stat.h>
     #include <unistd.h>
 #endif
-
-using TestDocument = ujson::DocumentView;
 
 namespace {
 
@@ -101,6 +99,38 @@ namespace {
 
     constexpr const char* kTwitterPath = UJSON_TEST_DATA_DIR "/twitter.json";
 
+    struct ParsedDocument {
+        ujson::Node* root_node = nullptr;
+        ujson::Arena* arena = nullptr;
+        ujson::ParseError err {};
+
+        [[nodiscard]] bool ok() const noexcept {
+            return err.ok() && root_node;
+        }
+
+        [[nodiscard]] const ujson::ParseError& error() const noexcept {
+            return err;
+        }
+
+        [[nodiscard]] ujson::ValueRef root() const noexcept {
+            return {root_node, arena};
+        }
+    };
+
+    [[nodiscard]] ParsedDocument parse_document(const std::string_view json, ujson::Arena& arena, const std::uint32_t max_depth) {
+        ParsedDocument doc {.root_node = nullptr, .arena = &arena, .err = {}};
+
+        ujson::SaxDomHandler builder {arena, max_depth};
+        ujson::CoreParser<false, true, ujson::SaxDomHandler> parser(builder, json, max_depth);
+
+        doc.err = parser.parse_root();
+        if (!builder.ok())
+            doc.err = builder.error();
+
+        doc.root_node = builder.root();
+        return doc;
+    }
+
 } // namespace
 
 // -----------------------------
@@ -113,7 +143,7 @@ TEST_CASE("ujson twitter DOM parse (mmap, no copy)", "[ujson][twitter]") {
     MappedFile mf {kTwitterPath};
     const std::string_view json = mf.view();
 
-    const auto doc = TestDocument::parse(json, arena, 512);
+    const auto doc = parse_document(json, arena, 512);
     std::cout << doc.error().format<ujson::ErrorFormat::Pretty>();
     REQUIRE(doc.ok());
     const auto root = doc.root();
@@ -266,7 +296,7 @@ TEST_CASE("twitter compare ujson vs rapidjson (617KB)", "[bench][twitter][vs]") 
     {
         ujson::NewAllocator alloc {};
         ujson::Arena arena {alloc};
-        auto doc = TestDocument::parse(json, arena, 512);
+        auto doc = parse_document(json, arena, 512);
         REQUIRE(doc.ok());
 
         rapidjson::Document rdoc;
@@ -279,7 +309,7 @@ TEST_CASE("twitter compare ujson vs rapidjson (617KB)", "[bench][twitter][vs]") 
         BENCHMARK("ujson DOM twitter") {
             ujson::NewAllocator alloc {};
             ujson::Arena arena {alloc};
-            auto doc = TestDocument::parse(json, arena, 512);
+            auto doc = parse_document(json, arena, 512);
             REQUIRE(doc.ok());
             return doc.root().size(); // prevent optimization
         };
@@ -369,7 +399,7 @@ TEST_CASE("twitter compare ujson vs rapidjson (617KB)", "[bench][twitter][vs]") 
         // Pre-parse once for both libraries
         ujson::NewAllocator alloc {};
         ujson::Arena arena {alloc};
-        auto doc = TestDocument::parse(json, arena, 512);
+        auto doc = parse_document(json, arena, 512);
         REQUIRE(doc.ok());
 
         rapidjson::Document rdoc;
@@ -422,7 +452,7 @@ TEST_CASE("ujson twitter deep field traversal benchmark (DOM, mmap)", "[ujson][t
     MappedFile mf {kTwitterPath};
     const std::string_view json = mf.view();
 
-    const auto doc = TestDocument::parse(json, arena, 512);
+    const auto doc = parse_document(json, arena, 512);
     REQUIRE(doc.ok());
 
     const auto root = doc.root();
@@ -659,7 +689,7 @@ TEST_CASE("ujson twitter: SAX -> DOM -> encode (streaming transform)", "[ujson][
     ujson::NewAllocator alloc;
     ujson::Arena arena {alloc};
 
-    ujson::DocumentT doc = TestDocument::parse(std::string_view {input}, arena, kMaxDepth);
+    auto doc = parse_document(std::string_view {input}, arena, kMaxDepth);
     REQUIRE(doc.ok());
 
     BENCHMARK("twitter: encode only (from DOM)") {
