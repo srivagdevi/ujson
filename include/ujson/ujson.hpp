@@ -47,7 +47,6 @@
 
 namespace ujson {
     class Arena;
-    struct DomContext;
 } // namespace ujson
 
 namespace ujson::concepts {
@@ -1575,11 +1574,6 @@ namespace ujson::detail {
 } // namespace ujson::detail
 
 namespace ujson {
-    struct DomContext {
-        Arena* arena {};
-        detail::key_format fmt {detail::key_format::None};
-    };
-
     [[nodiscard]] UJSON_FORCEINLINE detail::key_format init_key_format(Arena& a, detail::key_format requested) noexcept;
 
     struct TapeStorage;
@@ -2839,17 +2833,13 @@ namespace ujson {
     class ValueRef {
     public:
         ValueRef() = default;
-        ValueRef(Node* n, Arena* a): n_(n) {
-            if (a) {
-                ctx_storage_.arena = a;
-                ctx_storage_.fmt = init_key_format(*a, detail::key_format::None);
-                ctx_ = &ctx_storage_;
-            }
+        ValueRef(Node* n, Arena* a): n_(n), arena_(a) {
+            if (arena_)
+                (void)init_key_format(*arena_, detail::key_format::None);
         }
-        ValueRef(Node* n, const DomContext* ctx): n_(n), ctx_(ctx) { }
 
         [[nodiscard]] UJSON_FORCEINLINE Arena* arena() const noexcept {
-            return ctx_ ? ctx_->arena : nullptr;
+            return arena_;
         }
 
         [[nodiscard]] UJSON_FORCEINLINE Type type() const noexcept {
@@ -3105,17 +3095,18 @@ namespace ujson {
 
     private:
         [[nodiscard]] UJSON_FORCEINLINE ValueRef make_ref(Node* n) const noexcept {
-            return ctx_ ? ValueRef {n, ctx_} : ValueRef {};
+            return arena_ ? ValueRef {n, arena_} : ValueRef {};
         }
 
         [[nodiscard]] UJSON_FORCEINLINE std::string_view normalize_key(const std::string_view key, detail::KeyScratch& scratch) const noexcept {
-            const auto fmt = ctx_ ? ctx_->fmt : detail::key_format::None;
-            if (const auto* arena_ptr = arena()) {
+            auto* arena_ptr = arena();
+            const auto fmt = arena_ptr ? arena_ptr->key_format() : detail::key_format::None;
+            if (arena_ptr) {
                 if (const auto* storage = tape_storage(arena_ptr); storage && !storage->normalized_keys)
                     return key;
             }
             std::string_view out = key;
-            if (!detail::normalize_ascii(key, fmt, arena(), scratch, out))
+            if (!detail::normalize_ascii(key, fmt, arena_ptr, scratch, out))
                 return key;
             return out;
         }
@@ -3259,8 +3250,7 @@ namespace ujson {
         friend class detail::JsonWriterCoreImpl;
 
         Node* n_ {};
-        const DomContext* ctx_ {};
-        DomContext ctx_storage_ {};
+        Arena* arena_ {};
     };
 
     struct ValueRef::ArrayIter {
@@ -3269,7 +3259,7 @@ namespace ujson {
         std::uint32_t cur_idx {};
         std::uint32_t cur_pos {};
         std::uint32_t remaining {};
-        const DomContext* ctx {};
+        Arena* arena {};
 
         UJSON_FORCEINLINE ValueRef operator*() const noexcept {
             if (remaining == 0)
@@ -3277,11 +3267,11 @@ namespace ujson {
             if (tape && tape_ready(tape)) {
                 if (cur_idx >= tape->size)
                     return {};
-                return ctx ? ValueRef {tape->tape + cur_idx, ctx} : ValueRef {};
+                return arena ? ValueRef {tape->tape + cur_idx, arena} : ValueRef {};
             }
             if (!items)
                 return {};
-            return ctx ? ValueRef {items[cur_pos], ctx} : ValueRef {};
+            return arena ? ValueRef {items[cur_pos], arena} : ValueRef {};
         }
 
         UJSON_FORCEINLINE ArrayIter& operator++() noexcept {
@@ -3306,13 +3296,13 @@ namespace ujson {
         Node* const* items {};
         std::uint32_t start_idx {};
         std::uint32_t count {};
-        const DomContext* ctx {};
+        Arena* arena {};
 
         UJSON_FORCEINLINE ArrayIter begin() const noexcept {
-            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = 0, .remaining = count, .ctx = ctx};
+            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = 0, .remaining = count, .arena = arena};
         }
         UJSON_FORCEINLINE ArrayIter end() const noexcept {
-            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = count, .remaining = 0, .ctx = ctx};
+            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = count, .remaining = 0, .arena = arena};
         }
     };
 
@@ -3327,7 +3317,7 @@ namespace ujson {
         std::uint32_t cur_idx {};
         std::uint32_t cur_pos {};
         std::uint32_t remaining {};
-        const DomContext* ctx {};
+        Arena* arena {};
 
         UJSON_FORCEINLINE Member operator*() const noexcept {
             if (remaining == 0)
@@ -3337,14 +3327,14 @@ namespace ujson {
                 if (cur_idx >= tape->size)
                     return {};
                 Node* child = tape->tape + cur_idx;
-                return child ? Member {.key = child->key, .value = ctx ? ValueRef {child, ctx} : ValueRef {}} : Member {};
+                return child ? Member {.key = child->key, .value = arena ? ValueRef {child, arena} : ValueRef {}} : Member {};
             }
 
             if (!items)
                 return {};
 
             Node* child = items[cur_pos];
-            return child ? Member {.key = child->key, .value = ctx ? ValueRef {child, ctx} : ValueRef {}} : Member {};
+            return child ? Member {.key = child->key, .value = arena ? ValueRef {child, arena} : ValueRef {}} : Member {};
         }
 
         UJSON_FORCEINLINE ObjIter& operator++() noexcept {
@@ -3371,14 +3361,14 @@ namespace ujson {
         Node* const* items {}; // pointer-DOM fallback
         std::uint32_t start_idx {};
         std::uint32_t count {};
-        const DomContext* ctx {};
+        Arena* arena {};
 
         UJSON_FORCEINLINE ObjIter begin() const noexcept {
-            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = 0, .remaining = count, .ctx = ctx};
+            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = 0, .remaining = count, .arena = arena};
         }
 
         UJSON_FORCEINLINE ObjIter end() const noexcept {
-            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = count, .remaining = 0, .ctx = ctx};
+            return {.tape = tape, .items = items, .cur_idx = start_idx, .cur_pos = count, .remaining = 0, .arena = arena};
         }
     };
 
@@ -3388,10 +3378,10 @@ namespace ujson {
         const auto& k = n_->data.kids;
         const auto* t = tape_storage(arena());
         if (!tape_ready(t))
-            return ArrayRange {.tape = nullptr, .items = k.items, .start_idx = 0, .count = k.count, .ctx = ctx_};
+            return ArrayRange {.tape = nullptr, .items = k.items, .start_idx = 0, .count = k.count, .arena = arena_};
 
         const std::uint32_t parent_idx = tape_index_of(t, n_);
-        return ArrayRange {.tape = t, .items = nullptr, .start_idx = parent_idx + 1u, .count = k.count, .ctx = ctx_};
+        return ArrayRange {.tape = t, .items = nullptr, .start_idx = parent_idx + 1u, .count = k.count, .arena = arena_};
     }
 
     UJSON_FORCEINLINE ValueRef::ObjRange ValueRef::members() const noexcept {
@@ -3402,11 +3392,11 @@ namespace ujson {
         const auto* t = tape_storage(arena());
 
         if (!tape_ready(t)) {
-            return ObjRange {.tape = nullptr, .items = k.items, .start_idx = 0, .count = k.count, .ctx = ctx_};
+            return ObjRange {.tape = nullptr, .items = k.items, .start_idx = 0, .count = k.count, .arena = arena_};
         }
 
         const std::uint32_t parent_idx = tape_index_of(t, n_);
-        return ObjRange {.tape = t, .items = nullptr, .start_idx = parent_idx + 1u, .count = k.count, .ctx = ctx_};
+        return ObjRange {.tape = t, .items = nullptr, .start_idx = parent_idx + 1u, .count = k.count, .arena = arena_};
     }
 
     template <class H>
@@ -4107,14 +4097,15 @@ fallback_double:
 
     class SaxDomHandler {
     public:
-        explicit SaxDomHandler(DomContext ctx, const std::uint32_t max_depth = kDefaultMaxDepth): max_depth_(max_depth ? max_depth : 1u), ctx_(ctx) {
+        explicit SaxDomHandler(Arena& arena, const std::uint32_t max_depth = kDefaultMaxDepth): max_depth_(max_depth ? max_depth : 1u), arena_(&arena) {
             sp_ = 0;
             root_ = nullptr;
 
-            tape_ = tape_storage(ctx_.arena);
+            (void)init_key_format(arena, detail::key_format::None);
+            tape_ = tape_storage(arena_);
 
             stack_cap_ = 12;
-            stack_ = ctx_.arena ? ctx_.arena->make_array<Frame>(stack_cap_) : nullptr;
+            stack_ = arena_ ? arena_->make_array<Frame>(stack_cap_) : nullptr;
             if (!stack_) {
                 set_err(ErrorCode::WriterOverflow);
                 stack_cap_ = 0;
@@ -4126,11 +4117,11 @@ fallback_double:
         }
 
         [[nodiscard]] UJSON_FORCEINLINE Arena& arena() const noexcept {
-            return *ctx_.arena;
+            return *arena_;
         }
 
         [[nodiscard]] UJSON_FORCEINLINE char* string_buffer(const std::size_t n) const {
-            return ctx_.arena ? static_cast<char*>(ctx_.arena->alloc(n, 1)) : nullptr;
+            return arena_ ? static_cast<char*>(arena_->alloc(n, 1)) : nullptr;
         }
 
         UJSON_FORCEINLINE bool on_null() {
@@ -4231,7 +4222,7 @@ fallback_double:
                 return false;
             }
 
-            Frame* ns = ctx_.arena ? ctx_.arena->make_array<Frame>(new_cap) : nullptr;
+            Frame* ns = arena_ ? arena_->make_array<Frame>(new_cap) : nullptr;
             if (!ns) {
                 set_err(ErrorCode::WriterOverflow);
                 return false;
@@ -4246,7 +4237,7 @@ fallback_double:
         }
         [[nodiscard]] UJSON_FORCEINLINE Node* alloc_node() const {
             if (!tape_) {
-                Node* n = ctx_.arena ? ctx_.arena->make<Node>() : nullptr;
+                Node* n = arena_ ? arena_->make<Node>() : nullptr;
                 if (!n)
                     set_err(ErrorCode::WriterOverflow);
                 return n;
@@ -4269,7 +4260,7 @@ fallback_double:
         [[nodiscard]] bool grow_tape() const {
             const uint32_t new_cap = tape_->size ? tape_->size * 2u : 256u;
 
-            Node* new_buf = ctx_.arena ? ctx_.arena->make_array<Node>(new_cap) : nullptr;
+            Node* new_buf = arena_ ? arena_->make_array<Node>(new_cap) : nullptr;
             if (!new_buf) {
                 set_err(ErrorCode::WriterOverflow);
                 return false;
@@ -4298,13 +4289,13 @@ fallback_double:
                     return false;
                 }
                 std::string_view normalized;
-                if (!detail::normalize_ascii(pending_key_, ctx_.fmt, ctx_.arena, key_scratch_, normalized)) {
+                if (!detail::normalize_ascii(pending_key_, arena_->key_format(), arena_, key_scratch_, normalized)) {
                     set_err(ErrorCode::WriterOverflow);
                     return false;
                 }
 
                 if (normalized.data() >= key_scratch_.buf && normalized.data() < key_scratch_.buf + sizeof(key_scratch_.buf)) {
-                    auto* dst = ctx_.arena ? static_cast<char*>(ctx_.arena->alloc(normalized.size() + 1u, 1u)) : nullptr;
+                    auto* dst = arena_ ? static_cast<char*>(arena_->alloc(normalized.size() + 1u, 1u)) : nullptr;
                     if (!dst) {
                         set_err(ErrorCode::WriterOverflow);
                         return false;
@@ -4329,7 +4320,7 @@ fallback_double:
 
             if (!kids.items) {
                 constexpr auto kInitCap = 16u;
-                kids.items = ctx_.arena ? ctx_.arena->make_array<Node*>(kInitCap) : nullptr;
+                kids.items = arena_ ? arena_->make_array<Node*>(kInitCap) : nullptr;
                 if (!kids.items) {
                     set_err(ErrorCode::WriterOverflow);
                     return false;
@@ -4337,7 +4328,7 @@ fallback_double:
                 kids.capacity = kInitCap;
             } else if (kids.count >= kids.capacity) {
                 const std::uint32_t new_cap = kids.capacity ? kids.capacity * 2u : 16u;
-                Node** new_items = ctx_.arena ? ctx_.arena->make_array<Node*>(new_cap) : nullptr;
+                Node** new_items = arena_ ? arena_->make_array<Node*>(new_cap) : nullptr;
                 if (!new_items) {
                     set_err(ErrorCode::WriterOverflow);
                     return false;
@@ -4476,7 +4467,7 @@ fallback_double:
         bool has_pending_key_ {};
 
         mutable detail::KeyScratch key_scratch_ {};
-        DomContext ctx_ {};
+        Arena* arena_ {};
     };
 
     template <class T>
@@ -4569,8 +4560,7 @@ fallback_double:
         }
 
         [[nodiscard]] UJSON_FORCEINLINE ValueRef root() const noexcept {
-            ctx_.arena = &arena();
-            return ValueRef {root_, &ctx_};
+            return ValueRef {root_, &arena()};
         }
 
     private:
@@ -4605,10 +4595,9 @@ fallback_double:
 
             arena().tape_storage_ = storage;
 
-            ctx_.arena = &arena();
-            ctx_.fmt = init_key_format(arena(), detail::key_format::None);
+            (void)init_key_format(arena(), detail::key_format::None);
 
-            SaxDomHandler builder(ctx_, max_depth);
+            SaxDomHandler builder(arena(), max_depth);
             CoreParser<MaterializeStrings, StrictUtf8, SaxDomHandler> p(builder, input_view_, si, max_depth);
 
             err_ = p.parse_root();
@@ -4626,7 +4615,6 @@ fallback_double:
         ParseError err_ {};
         std::string_view input_view_ {};
         std::string input_own_ {};
-        mutable DomContext ctx_ {};
     };
 
     // default production document
@@ -5321,8 +5309,7 @@ fallback_double:
 
         template <bool MaterializeStrings = false, bool StrictUtf8 = true>
         UJSON_FORCEINLINE ParseError parse() {
-            ctx_.arena = &arena();
-            SaxAdapter a {h_, ctx_};
+            SaxAdapter a {h_, arena()};
             CoreParser<MaterializeStrings, StrictUtf8, SaxAdapter> p(a, s_, max_depth_);
             return p.parse_root();
         }
@@ -5338,29 +5325,28 @@ fallback_double:
         void init(const std::string_view s, const std::uint32_t max_depth, const detail::key_format fmt) {
             s_ = s;
             max_depth_ = max_depth;
-            ctx_.fmt = init_key_format(arena(), fmt);
+            (void)init_key_format(arena(), fmt);
         }
 
         Handler& h_; // NOLINT
         std::string_view s_;
         std::uint32_t max_depth_ {512};
-        DomContext ctx_ {};
     };
 
     template <class Handler>
     struct SaxParser<Handler>::SaxAdapter {
         Handler& h;
-        DomContext& ctx;
+        Arena* arena_ptr {};
         detail::KeyScratch scratch;
 
-        SaxAdapter(Handler& hh, DomContext& context): h(hh), ctx(context) { }
+        SaxAdapter(Handler& hh, Arena& arena_ref): h(hh), arena_ptr(&arena_ref) { }
 
         [[nodiscard]] char* string_buffer(const std::size_t n) const {
-            return ctx.arena ? static_cast<char*>(ctx.arena->alloc(n, 1)) : nullptr;
+            return arena_ptr ? static_cast<char*>(arena_ptr->alloc(n, 1)) : nullptr;
         }
 
         [[nodiscard]] Arena& arena() const {
-            return *ctx.arena;
+            return *arena_ptr;
         }
 
         bool on_null() {
@@ -5380,7 +5366,7 @@ fallback_double:
         }
         bool on_key(std::string_view k) {
             std::string_view normalized;
-            if (!detail::normalize_ascii(k, ctx.fmt, ctx.arena, scratch, normalized))
+            if (!detail::normalize_ascii(k, arena_ptr ? arena_ptr->key_format() : detail::key_format::None, arena_ptr, scratch, normalized))
                 return false;
             return h.on_key(normalized);
         }
@@ -5401,15 +5387,15 @@ fallback_double:
     class DomBuilder : public ArenaHolder {
     public:
         explicit DomBuilder(): ArenaHolder {true} {
-            ctx_.fmt = init_key_format(arena(), detail::key_format::None);
+            (void)init_key_format(arena(), detail::key_format::None);
         }
         explicit DomBuilder(Arena& arena): ArenaHolder {arena} {
-            ctx_.fmt = init_key_format(this->arena(), detail::key_format::None);
+            (void)init_key_format(this->arena(), detail::key_format::None);
         }
 
         template <AllocatorLike Allocator>
         explicit DomBuilder(Allocator& alloc): ArenaHolder {alloc} {
-            ctx_.fmt = init_key_format(arena(), detail::key_format::None);
+            (void)init_key_format(arena(), detail::key_format::None);
         }
 
         class ObjectScope {
@@ -5609,7 +5595,7 @@ fallback_double:
         [[nodiscard]] std::string encode(const bool pretty = false) const {
             if (!root_ || !ok())
                 return {};
-            return ujson::encode(ValueRef(root_, &ctx_), pretty);
+            return ujson::encode(ValueRef(root_, &arena()), pretty);
         }
 
     private:
@@ -5694,7 +5680,7 @@ fallback_double:
                     return nullptr;
                 }
                 std::string_view normalized;
-                if (!detail::normalize_ascii(pending_key_, ctx_.fmt, &arena(), key_scratch_, normalized)) {
+                if (!detail::normalize_ascii(pending_key_, arena().key_format(), &arena(), key_scratch_, normalized)) {
                     set_err(ErrorCode::WriterOverflow);
                     return nullptr;
                 }
@@ -5807,7 +5793,6 @@ fallback_double:
 
         std::string_view pending_key_ {};
         bool has_pending_key_ {};
-        DomContext ctx_ {};
         mutable detail::KeyScratch key_scratch_ {};
 
         ParseError err_ {};
@@ -5961,8 +5946,7 @@ namespace ujson {
                 return {};
 
             detail::JsonWriterCoreImpl<StringSink, detail::StringEscapePolicy::PreEscaped> writer(StringSink {}, pretty, kDefaultMaxDepth, nullptr);
-            DomContext ctx {&arena(), ctx_.fmt};
-            if (!writer.write(ValueRef(root_, &ctx)))
+            if (!writer.write(ValueRef(root_, &arena())))
                 return {};
             return writer.finish();
         }
@@ -5971,7 +5955,7 @@ namespace ujson {
         friend class NodeRef;
 
         void initialize() {
-            ctx_.fmt = init_key_format(arena(), opt_.key_format);
+            (void)init_key_format(arena(), opt_.key_format);
             root_ = arena().make<Node>();
             if (!root_) {
                 err_.code = ErrorCode::WriterOverflow;
@@ -6028,7 +6012,7 @@ namespace ujson {
         }
 
         [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_store(const std::string_view key, std::string_view& out) {
-            if (!detail::normalize_ascii(key, ctx_.fmt, &arena(), key_scratch_, out)) {
+            if (!detail::normalize_ascii(key, arena().key_format(), &arena(), key_scratch_, out)) {
                 set_err(ErrorCode::WriterOverflow);
                 return false;
             }
@@ -6056,7 +6040,7 @@ namespace ujson {
         }
 
         [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_lookup(const std::string_view key, detail::KeyScratch& scratch, std::string_view& out) const noexcept {
-            return detail::normalize_ascii(key, ctx_.fmt, &arena(), scratch, out);
+            return detail::normalize_ascii(key, arena().key_format(), &arena(), scratch, out);
         }
 
         [[nodiscard]] Node* make_container(const Type t, std::uint32_t cap) {
@@ -7003,7 +6987,6 @@ namespace ujson {
 
         Options opt_ {};
         Node* root_ {};
-        DomContext ctx_ {};
         mutable detail::KeyScratch key_scratch_ {};
         ParseError err_ {};
     };
