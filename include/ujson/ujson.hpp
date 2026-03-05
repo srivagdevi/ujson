@@ -4569,6 +4569,7 @@ fallback_double:
         }
 
         [[nodiscard]] UJSON_FORCEINLINE ValueRef root() const noexcept {
+            ctx_.arena = &arena();
             return ValueRef {root_, &ctx_};
         }
 
@@ -4625,7 +4626,7 @@ fallback_double:
         ParseError err_ {};
         std::string_view input_view_ {};
         std::string input_own_ {};
-        DomContext ctx_ {};
+        mutable DomContext ctx_ {};
     };
 
     // default production document
@@ -5320,6 +5321,7 @@ fallback_double:
 
         template <bool MaterializeStrings = false, bool StrictUtf8 = true>
         UJSON_FORCEINLINE ParseError parse() {
+            ctx_.arena = &arena();
             SaxAdapter a {h_, ctx_};
             CoreParser<MaterializeStrings, StrictUtf8, SaxAdapter> p(a, s_, max_depth_);
             return p.parse_root();
@@ -5336,8 +5338,7 @@ fallback_double:
         void init(const std::string_view s, const std::uint32_t max_depth, const detail::key_format fmt) {
             s_ = s;
             max_depth_ = max_depth;
-            ctx_.arena = arena_;
-            ctx_.fmt = init_key_format(*arena_, fmt);
+            ctx_.fmt = init_key_format(arena(), fmt);
         }
 
         Handler& h_; // NOLINT
@@ -5400,18 +5401,15 @@ fallback_double:
     class DomBuilder : public ArenaHolder {
     public:
         explicit DomBuilder(): ArenaHolder {true} {
-            ctx_.arena = arena_;
-            ctx_.fmt = init_key_format(*arena_, detail::key_format::None);
+            ctx_.fmt = init_key_format(arena(), detail::key_format::None);
         }
         explicit DomBuilder(Arena& arena): ArenaHolder {arena} {
-            ctx_.arena = arena_;
-            ctx_.fmt = init_key_format(*arena_, detail::key_format::None);
+            ctx_.fmt = init_key_format(this->arena(), detail::key_format::None);
         }
 
         template <AllocatorLike Allocator>
         explicit DomBuilder(Allocator& alloc): ArenaHolder {alloc} {
-            ctx_.arena = arena_;
-            ctx_.fmt = init_key_format(*arena_, detail::key_format::None);
+            ctx_.fmt = init_key_format(arena(), detail::key_format::None);
         }
 
         class ObjectScope {
@@ -5696,7 +5694,7 @@ fallback_double:
                     return nullptr;
                 }
                 std::string_view normalized;
-                if (!detail::normalize_ascii(pending_key_, ctx_.fmt, ctx_.arena, key_scratch_, normalized)) {
+                if (!detail::normalize_ascii(pending_key_, ctx_.fmt, &arena(), key_scratch_, normalized)) {
                     set_err(ErrorCode::WriterOverflow);
                     return nullptr;
                 }
@@ -5963,7 +5961,8 @@ namespace ujson {
                 return {};
 
             detail::JsonWriterCoreImpl<StringSink, detail::StringEscapePolicy::PreEscaped> writer(StringSink {}, pretty, kDefaultMaxDepth, nullptr);
-            if (!writer.write(ValueRef(root_, &ctx_)))
+            DomContext ctx {&arena(), ctx_.fmt};
+            if (!writer.write(ValueRef(root_, &ctx)))
                 return {};
             return writer.finish();
         }
@@ -5972,8 +5971,7 @@ namespace ujson {
         friend class NodeRef;
 
         void initialize() {
-            ctx_.arena = arena_;
-            ctx_.fmt = init_key_format(*arena_, opt_.key_format);
+            ctx_.fmt = init_key_format(arena(), opt_.key_format);
             root_ = arena().make<Node>();
             if (!root_) {
                 err_.code = ErrorCode::WriterOverflow;
@@ -6030,7 +6028,7 @@ namespace ujson {
         }
 
         [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_store(const std::string_view key, std::string_view& out) {
-            if (!detail::normalize_ascii(key, ctx_.fmt, ctx_.arena, key_scratch_, out)) {
+            if (!detail::normalize_ascii(key, ctx_.fmt, &arena(), key_scratch_, out)) {
                 set_err(ErrorCode::WriterOverflow);
                 return false;
             }
@@ -6058,7 +6056,7 @@ namespace ujson {
         }
 
         [[nodiscard]] UJSON_FORCEINLINE bool normalize_key_lookup(const std::string_view key, detail::KeyScratch& scratch, std::string_view& out) const noexcept {
-            return detail::normalize_ascii(key, ctx_.fmt, ctx_.arena, scratch, out);
+            return detail::normalize_ascii(key, ctx_.fmt, &arena(), scratch, out);
         }
 
         [[nodiscard]] Node* make_container(const Type t, std::uint32_t cap) {
