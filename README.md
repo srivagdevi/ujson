@@ -426,3 +426,26 @@ arr.add(1);
 
 auto json = vb.encode();
 ```
+
+---
+
+## Key format
+
+```cpp
+ujson::NewAllocator alloc{};
+ujson::Arena arena{alloc};
+
+arena.set_key_format(ujson::detail::snake_case);
+auto fmt = arena.key_format();
+
+ujson::ValueBuilder::Options opt{};
+opt.key_format = fmt;
+
+ujson::ValueBuilder vb{arena, opt};
+auto root = vb.root().set_object();
+
+root.add("fooBar", 1);
+root.add("FooBaz", 2);
+
+auto json = vb.encode();
+```
